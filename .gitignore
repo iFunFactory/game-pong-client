@@ -1,0 +1,10 @@
+*.meta
+.vs/
+Library/
+*.csproj
+Temp/
+test_Data/
+*.pdb
+test.exe
+*.sln
+Assets/UnityVS/
