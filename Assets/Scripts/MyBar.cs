@@ -1,19 +1,23 @@
 ﻿using UnityEngine;
+using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using System.Collections.Generic;
 
 public class MyBar : Singleton<MyBar>, IDragHandler
 {
+    public CanvasScaler canvasScaler;
     float lastBarX;
 
     void Start()
     {
+        Debug.Log("canvasScaler.scaleFactor: " + canvasScaler.scaleFactor);
         lastBarX = gameObject.transform.localPosition.x;
     }
 
     public void OnDrag(PointerEventData eventData)
     {
-        gameObject.transform.localPosition += new Vector3(eventData.delta.x, 0, 0);
+        float deltaScaler = canvasScaler.referenceResolution.y / Screen.height;
+        gameObject.transform.localPosition += new Vector3(eventData.delta.x * deltaScaler, 0, 0);
     }
 
     void Update()

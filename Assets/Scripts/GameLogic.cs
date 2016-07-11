@@ -58,6 +58,9 @@ public class GameLogic : Singleton<GameLogic>
     public void OnMatchSuccess(Dictionary<string, object> message)
     {
         textLabel.gameObject.SetActive(false);
+        myBar.transform.localPosition = new Vector3(0, myBar.transform.localPosition.y, myBar.transform.localPosition.z);
+        oppBar.transform.localPosition = new Vector3(0, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
+        ballBody.transform.localPosition = new Vector3();
         gameRoot.SetActive(true);
 
         if (message["A"].Equals(NetworkManager.Instance.MyId))
@@ -85,8 +88,7 @@ public class GameLogic : Singleton<GameLogic>
     // 매치 실패
     public void OnMatchFailed()
     {
-        textLabel.text = "매칭에 실패 했습니다";
-        Invoke("RollbackToReadyPhase", 2);
+        ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", RollbackToReadyPhase);
     }
 
     void RollbackToReadyPhase()
@@ -161,26 +163,18 @@ public class GameLogic : Singleton<GameLogic>
     {
         if (state != GAME_STATE.GAME)
             return;
-
         gameRoot.SetActive(false);
-        textLabel.text = "승리!";
-        textLabel.gameObject.SetActive(true);
+        ModalWindow.Instance.Open("결과", "승리했습니다!", RollbackToReadyPhase);
         state = GAME_STATE.RESULT;
-
-        Invoke("RollbackToReadyPhase", 3);
     }
 
     void Lose()
     {
         if (state != GAME_STATE.GAME)
             return;
-
         gameRoot.SetActive(false);
-        textLabel.text = "패배";
-        textLabel.gameObject.SetActive(true);
+        ModalWindow.Instance.Open("결과", "패배했습니다!", RollbackToReadyPhase);
         state = GAME_STATE.RESULT;
-
-        Invoke("RollbackToReadyPhase", 3);
     }
 
     void Update()
@@ -219,16 +213,26 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
-    public void ErrorQuit()
+    void OnApplicationPause(bool isPaused)
     {
-        matchButton.gameObject.SetActive(false);
-        gameRoot.SetActive(false);
-        textLabel.text = "에러가 발생 했습니다. 게임을 종료합니다.";
-        textLabel.gameObject.SetActive(true);
-        Invoke("Quit", 3);
+        if(isPaused)
+        {
+            NetworkManager.Instance.Stop();
+        }
+        else
+        {
+            state = GAME_STATE.INIT;
+            ModalWindow.Instance.Close();
+            matchButton.gameObject.SetActive(false);
+            gameRoot.SetActive(false);
+            textLabel.text = "접속 중입니다.";
+            textLabel.gameObject.SetActive(true);
+
+            NetworkManager.Instance.Init();
+        }
     }
 
-    void Quit()
+    public void Quit()
     {
         Application.Quit();
 #if UNITY_EDITOR

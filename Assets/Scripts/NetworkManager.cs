@@ -24,7 +24,6 @@ public class NetworkManager : Singleton<NetworkManager>
     public string MyId;
 
     private FunapiSession session;
-    private MessageHelper messageHelper;
 
     // 네트워크 초기화
     public void Init()
@@ -73,6 +72,14 @@ public class NetworkManager : Singleton<NetworkManager>
                 // reconnect
                 session.Connect(protocol);
                 break;
+            case TransportEventType.kConnectFailed:
+            case TransportEventType.kConnectTimedout:
+                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
+                break;
+            case TransportEventType.kStopped:
+                // 임시 처리 (이리로 오면 안되는거 아닌가?)
+                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
+                break;
         }
     }
 
@@ -91,6 +98,7 @@ public class NetworkManager : Singleton<NetworkManager>
                 {
                     // login failure
                     state = STATE.ERROR;
+                    ModalWindow.Instance.Open("로그인 실패", "로그인에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
                 }
                 break;
             case "match":
@@ -123,5 +131,10 @@ public class NetworkManager : Singleton<NetworkManager>
     void OnSessionClosed()
     {
         state = STATE.CLOSED;
+    }
+
+    public void Stop()
+    {
+        session.Stop();
     }
 }

@@ -8,3 +8,5 @@ test_Data/
 test.exe
 *.sln
 Assets/UnityVS/
+*.apk
+install.bat
