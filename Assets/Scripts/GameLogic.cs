@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using UnityEngine.UI;
+using System;
 using System.Collections.Generic;
 
 public class GameLogic : Singleton<GameLogic>
@@ -29,6 +30,8 @@ public class GameLogic : Singleton<GameLogic>
 
     bool upsideDown = false;
     string opponentId = "";
+
+    float lastBarTimeSeq = 0;
 
     void Start()
     {
@@ -62,6 +65,10 @@ public class GameLogic : Singleton<GameLogic>
         state = GAME_STATE.READY;
 
         textLabel.gameObject.SetActive(false);
+        // 위치 초기화
+        myBar.gameObject.transform.localPosition = new Vector3(0, myBar.gameObject.transform.localPosition.y);
+        oppBar.gameObject.transform.localPosition = new Vector3(0, oppBar.gameObject.transform.localPosition.y);
+        ball.Reset();
         gameRoot.SetActive(true);
 
         if (message["A"].Equals(NetworkManager.Instance.MyId))
@@ -108,10 +115,6 @@ public class GameLogic : Singleton<GameLogic>
         matchButton.gameObject.SetActive(false);
         state = GAME_STATE.GAME;
 
-        // 위치 초기화
-        myBar.gameObject.transform.localPosition = new Vector3(0, myBar.gameObject.transform.localPosition.y);
-        oppBar.gameObject.transform.localPosition = new Vector3(0, oppBar.gameObject.transform.localPosition.y);
-        ball.Reset();
         if (upsideDown == true)
             ball.SetBallProperties(0, 0, 1.5f, -1.5f);
         else
@@ -121,23 +124,29 @@ public class GameLogic : Singleton<GameLogic>
     // 게임 중 정보 업데이트
     public void RelayMessageReceived(Dictionary<string, object> message)
     {
+        // ball의 정보가 업데이트됨
+        if (message.ContainsKey("ballX") && message.ContainsKey("ballY") && message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
+        {
+            float x = Convert.ToSingle(message["ballX"]);
+            float y = Convert.ToSingle(message["ballY"]);
+            float vx = Convert.ToSingle(message["ballVX"]);
+            float vy = Convert.ToSingle(message["ballVY"]);
+            ball.SetBallProperties(-x, -y, -vx, -vy);
+        }
+
         // 상대 bar의 위치가 변경됨
         if (message.ContainsKey("barX"))
         {
-            int barX = (int)oppBar.transform.localPosition.x;
-            if (int.TryParse(message["barX"] as string, out barX))
-                oppBar.transform.localPosition = new Vector3(-barX, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
-        }
-
-        // ball의 정보가 업데이트됨
-        if(message.ContainsKey("ballX") && message.ContainsKey("ballY") && message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
-        {
-            float x, y, vx, vy;
-            if(float.TryParse(message["ballX"] as string, out x) && float.TryParse(message["ballY"] as string, out y) &&
-                float.TryParse(message["ballVX"] as string, out vx) && float.TryParse(message["ballVY"] as string, out vy))
+            if (message.ContainsKey("timeSeq"))
             {
-                ball.SetBallProperties(-x, -y, -vx, -vy);
+                float barTimeSeq = Convert.ToSingle(message["timeSeq"]);
+                if (barTimeSeq < lastBarTimeSeq)
+                    return;
+                lastBarTimeSeq = barTimeSeq;
             }
+            //int barX = (int)oppBar.transform.localPosition.x;
+            float barX = Convert.ToSingle(message["barX"]);
+            oppBar.transform.localPosition = new Vector3(-barX, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
         }
     }
 
@@ -182,21 +191,19 @@ public class GameLogic : Singleton<GameLogic>
                 break;
             case GAME_STATE.GAME:
                 // 승패 처리
-                if (ball.gameObject.transform.localPosition.y > oppBar.transform.localPosition.y + 32)
+                if (ball.gameObject.transform.localPosition.y > oppBar.transform.localPosition.y + 80)
                 {
                     // 승리
                     Dictionary<string, object> message = new Dictionary<string, object>();
                     message["result"] = "win";
                     NetworkManager.Instance.Send("result", message);
-                    Win();
                 }
-                else if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 32)
+                if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 80)
                 {
                     // 패배
                     Dictionary<string, object> message = new Dictionary<string, object>();
                     message["result"] = "lose";
                     NetworkManager.Instance.Send("result", message);
-                    Lose();
                 }
                 break;
         }

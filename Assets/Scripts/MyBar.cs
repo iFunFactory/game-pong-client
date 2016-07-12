@@ -27,8 +27,9 @@ public class MyBar : Singleton<MyBar>, IDragHandler
             lastBarX = gameObject.transform.localPosition.x;
 
             Dictionary<string, object> message = new Dictionary<string, object>();
-            message["barX"] = ((int)gameObject.transform.localPosition.x).ToString();
-            NetworkManager.Instance.Send("relay", message);
+            message["timeSeq"] = Time.realtimeSinceStartup;
+            message["barX"] = gameObject.transform.localPosition.x;
+            NetworkManager.Instance.Send("relay", message, Fun.TransportProtocol.kUdp);
         }
     }
 }
