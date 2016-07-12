@@ -10,7 +10,6 @@ public class MyBar : Singleton<MyBar>, IDragHandler
 
     void Start()
     {
-        Debug.Log("canvasScaler.scaleFactor: " + canvasScaler.scaleFactor);
         lastBarX = gameObject.transform.localPosition.x;
     }
 
@@ -22,6 +21,7 @@ public class MyBar : Singleton<MyBar>, IDragHandler
 
     void Update()
     {
+        // 일정 이상 bar의 위치가 이동되었으면, 상대에게 알린다
         if (Mathf.Abs(lastBarX - gameObject.transform.localPosition.x) > 1)
         {
             lastBarX = gameObject.transform.localPosition.x;

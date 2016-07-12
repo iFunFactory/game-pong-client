@@ -8,12 +8,11 @@ public class GameLogic : Singleton<GameLogic>
     public Text textLabel;
     public GameObject gameRoot;
 
-    public Rigidbody2D ballBody;
-
     public bool networkEnabled = true;
 
     public GameObject myBar;
     public GameObject oppBar;
+    public Ball ball;
 
     public enum GAME_STATE {
         INIT,       // init. game
@@ -21,7 +20,8 @@ public class GameLogic : Singleton<GameLogic>
         MATCHING,   // matching..
         READY,      // ready for game
         GAME,       // playing game
-        RESULT,     // game result
+        WIN,        // win a game
+        LOSE,       // lose a game
 
         NONE
     }
@@ -62,9 +62,6 @@ public class GameLogic : Singleton<GameLogic>
         state = GAME_STATE.READY;
 
         textLabel.gameObject.SetActive(false);
-        myBar.transform.localPosition = new Vector3(0, myBar.transform.localPosition.y, myBar.transform.localPosition.z);
-        oppBar.transform.localPosition = new Vector3(0, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
-        ballBody.transform.localPosition = new Vector3();
         gameRoot.SetActive(true);
 
         if (message["A"].Equals(NetworkManager.Instance.MyId))
@@ -92,10 +89,11 @@ public class GameLogic : Singleton<GameLogic>
     // 매치 실패
     public void OnMatchFailed()
     {
-        ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", RollbackToReadyPhase);
+        ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", RollbackToMenuPhase);
     }
 
-    void RollbackToReadyPhase()
+    // 
+    void RollbackToMenuPhase()
     {
         gameRoot.SetActive(false);
         textLabel.gameObject.SetActive(false);
@@ -113,13 +111,11 @@ public class GameLogic : Singleton<GameLogic>
         // 위치 초기화
         myBar.gameObject.transform.localPosition = new Vector3(0, myBar.gameObject.transform.localPosition.y);
         oppBar.gameObject.transform.localPosition = new Vector3(0, oppBar.gameObject.transform.localPosition.y);
-        ballBody.gameObject.transform.localPosition = new Vector3();
-        ballBody.velocity = new Vector2();
-
+        ball.Reset();
         if (upsideDown == true)
-            ballBody.velocity = new Vector2(1.5f, -1.5f);
+            ball.SetBallProperties(0, 0, 1.5f, -1.5f);
         else
-            ballBody.velocity = new Vector2(-1.5f, 1.5f);
+            ball.SetBallProperties(0, 0, -1.5f, 1.5f);
     }
 
     // 게임 중 정보 업데이트
@@ -133,36 +129,25 @@ public class GameLogic : Singleton<GameLogic>
                 oppBar.transform.localPosition = new Vector3(-barX, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
         }
 
-        // ball의 위치가 변경됨
-        if(message.ContainsKey("ballX") && message.ContainsKey("ballY"))
+        // ball의 정보가 업데이트됨
+        if(message.ContainsKey("ballX") && message.ContainsKey("ballY") && message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
         {
-            float ballX = ballBody.position.x;
-            float ballY = ballBody.position.y;
-            if (float.TryParse(message["ballX"] as string, out ballX) && float.TryParse(message["ballY"] as string, out ballY))
-                ballBody.position = new Vector2(-ballX, -ballY);
-        }
-        // ball의 속도가 변경됨
-        if (message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
-        {
-            float ballVX = ballBody.velocity.x;
-            float ballVY = ballBody.velocity.y;
-            if (float.TryParse(message["ballVX"] as string, out ballVX) && float.TryParse(message["ballVY"] as string, out ballVY))
-                ballBody.velocity = new Vector2(-ballVX, -ballVY);
+            float x, y, vx, vy;
+            if(float.TryParse(message["ballX"] as string, out x) && float.TryParse(message["ballY"] as string, out y) &&
+                float.TryParse(message["ballVX"] as string, out vx) && float.TryParse(message["ballVY"] as string, out vy))
+            {
+                ball.SetBallProperties(-x, -y, -vx, -vy);
+            }
         }
     }
 
+    // 서버의 결과 응답을 처리
     public void ResultMessageReceived(Dictionary<string, object> message)
     {
         if (message["result"].Equals("win"))
-        {
-            // 강제 승리
             Win();
-        }
         else
-        {
-            // 강제 패배
             Lose();
-        }
     }
 
     void Win()
@@ -170,8 +155,8 @@ public class GameLogic : Singleton<GameLogic>
         if (state != GAME_STATE.GAME)
             return;
         gameRoot.SetActive(false);
-        ModalWindow.Instance.Open("결과", "승리했습니다!", RollbackToReadyPhase);
-        state = GAME_STATE.RESULT;
+        ModalWindow.Instance.Open("결과", "승리했습니다!", RollbackToMenuPhase);
+        state = GAME_STATE.WIN;
     }
 
     void Lose()
@@ -179,8 +164,8 @@ public class GameLogic : Singleton<GameLogic>
         if (state != GAME_STATE.GAME)
             return;
         gameRoot.SetActive(false);
-        ModalWindow.Instance.Open("결과", "패배했습니다!", RollbackToReadyPhase);
-        state = GAME_STATE.RESULT;
+        ModalWindow.Instance.Open("결과", "패배했습니다!", RollbackToMenuPhase);
+        state = GAME_STATE.LOSE;
     }
 
     void Update()
@@ -197,22 +182,20 @@ public class GameLogic : Singleton<GameLogic>
                 break;
             case GAME_STATE.GAME:
                 // 승패 처리
-                if (ballBody.gameObject.transform.localPosition.y > oppBar.transform.localPosition.y + 32)
+                if (ball.gameObject.transform.localPosition.y > oppBar.transform.localPosition.y + 32)
                 {
                     // 승리
                     Dictionary<string, object> message = new Dictionary<string, object>();
                     message["result"] = "win";
                     NetworkManager.Instance.Send("result", message);
-
                     Win();
                 }
-                else if (ballBody.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 32)
+                else if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 32)
                 {
                     // 패배
                     Dictionary<string, object> message = new Dictionary<string, object>();
                     message["result"] = "lose";
                     NetworkManager.Instance.Send("result", message);
-
                     Lose();
                 }
                 break;
