@@ -191,13 +191,6 @@ public class GameLogic : Singleton<GameLogic>
                 break;
             case GAME_STATE.GAME:
                 // 승패 처리
-                if (ball.gameObject.transform.localPosition.y > oppBar.transform.localPosition.y + 80)
-                {
-                    // 승리
-                    Dictionary<string, object> message = new Dictionary<string, object>();
-                    message["result"] = "win";
-                    NetworkManager.Instance.Send("result", message);
-                }
                 if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 80)
                 {
                     // 패배
