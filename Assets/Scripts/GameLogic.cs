@@ -17,8 +17,9 @@ public class GameLogic : Singleton<GameLogic>
 
     public enum GAME_STATE {
         INIT,       // init. game
-        READY,      // wait user input (click match button)
+        MENU,       // wait user input (click match button)
         MATCHING,   // matching..
+        READY,      // ready for game
         GAME,       // playing game
         RESULT,     // game result
 
@@ -43,20 +44,23 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
-    // 매치 요청
+    // 매치 요청 버튼 클릭
     void OnMatchButtonClick()
     {
+        // 화면 구성
         matchButton.gameObject.SetActive(false);
         textLabel.text = "매칭 중입니다";
         textLabel.gameObject.SetActive(true);
         state = GAME_STATE.MATCHING;
-
+        // 매치 요청
         NetworkManager.Instance.Send("match");
     }
 
     // 매치 성공
     public void OnMatchSuccess(Dictionary<string, object> message)
     {
+        state = GAME_STATE.READY;
+
         textLabel.gameObject.SetActive(false);
         myBar.transform.localPosition = new Vector3(0, myBar.transform.localPosition.y, myBar.transform.localPosition.z);
         oppBar.transform.localPosition = new Vector3(0, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
@@ -93,9 +97,10 @@ public class GameLogic : Singleton<GameLogic>
 
     void RollbackToReadyPhase()
     {
+        gameRoot.SetActive(false);
         textLabel.gameObject.SetActive(false);
         matchButton.gameObject.SetActive(true);
-        state = GAME_STATE.READY;
+        state = GAME_STATE.MENU;
     }
 
     // 게임 시작
@@ -120,14 +125,15 @@ public class GameLogic : Singleton<GameLogic>
     // 게임 중 정보 업데이트
     public void RelayMessageReceived(Dictionary<string, object> message)
     {
-        if(message.ContainsKey("barX"))
+        // 상대 bar의 위치가 변경됨
+        if (message.ContainsKey("barX"))
         {
-            // 상대 bar의 위치가 변경됨
             int barX = (int)oppBar.transform.localPosition.x;
             if (int.TryParse(message["barX"] as string, out barX))
                 oppBar.transform.localPosition = new Vector3(-barX, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
         }
 
+        // ball의 위치가 변경됨
         if(message.ContainsKey("ballX") && message.ContainsKey("ballY"))
         {
             float ballX = ballBody.position.x;
@@ -135,7 +141,7 @@ public class GameLogic : Singleton<GameLogic>
             if (float.TryParse(message["ballX"] as string, out ballX) && float.TryParse(message["ballY"] as string, out ballY))
                 ballBody.position = new Vector2(-ballX, -ballY);
         }
-
+        // ball의 속도가 변경됨
         if (message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
         {
             float ballVX = ballBody.velocity.x;
@@ -186,7 +192,7 @@ public class GameLogic : Singleton<GameLogic>
                 {
                     textLabel.gameObject.SetActive(false);
                     matchButton.gameObject.SetActive(true);
-                    state = GAME_STATE.READY;
+                    state = GAME_STATE.MENU;
                 }
                 break;
             case GAME_STATE.GAME:
