@@ -72,8 +72,8 @@ public class NetworkManager : Singleton<NetworkManager>
                 // reconnect
                 session.Connect(protocol);
                 break;
-            case TransportEventType.kConnectFailed:
-            case TransportEventType.kConnectTimedout:
+            case TransportEventType.kConnectionFailed:
+            case TransportEventType.kConnectionTimedOut:
                 ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
                 break;
             case TransportEventType.kStopped:
@@ -125,7 +125,7 @@ public class NetworkManager : Singleton<NetworkManager>
             return;
         if (body == null)
             body = new Dictionary<string, object>();
-        session.SendMessage(messageType, body, EncryptionType.kDefaultEncryption, protocol);
+        session.SendMessage(messageType, body, protocol);
     }
 
     void OnSessionClosed()
@@ -135,6 +135,6 @@ public class NetworkManager : Singleton<NetworkManager>
 
     public void Stop()
     {
-        session.Stop();
+        session.Close();
     }
 }
