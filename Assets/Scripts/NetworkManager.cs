@@ -5,9 +5,11 @@ using System.Collections.Generic;
 
 public class NetworkManager : Singleton<NetworkManager>
 {
+    // 서버 주소를 수정하세요.
     public string server_addr = "carlos-vm";
-    public UInt16 server_tcp_port = 8012;
-    public UInt16 server_udp_port = 8013;
+    // 서버 포트 정보
+    public ushort server_tcp_port = 8012;
+    public ushort server_udp_port = 8013;
 
     public enum STATE
     {
@@ -16,8 +18,6 @@ public class NetworkManager : Singleton<NetworkManager>
         READY,      // session is ready
         CLOSED,     // session closed
         ERROR,      // error occurred
-
-        UNKNOWN,    // unknown state
     }
     public STATE state { get; private set; }
 
@@ -28,61 +28,60 @@ public class NetworkManager : Singleton<NetworkManager>
     // 네트워크 초기화
     public void Init()
     {
-        // uid를 구한다
+        // uid를 구해서 ID로 쓴다
 #if UNITY_EDITOR
         MyId = SystemInfo.deviceUniqueIdentifier + "_Editor";
 #else
         MyId = SystemInfo.deviceUniqueIdentifier + "_" + SystemInfo.deviceType;
 #endif
-        // 세션 생성
         state = STATE.START;
         session = FunapiSession.Create(server_addr, false);
-        session.SessionEventCallback += OnSessionEvent;         // 세션 이벤트 처리
-        session.TransportEventCallback += OnTransportEvent;     // Transport 이벤트 처리
-        session.ReceivedMessageCallback += OnReceive;           // 메세지 핸들러
-        // tcp connect
+        session.SessionEventCallback += OnSessionEvent;
+        session.TransportEventCallback += OnTransportEvent;
+        session.ReceivedMessageCallback += OnReceive;
+
         session.Connect(TransportProtocol.kTcp, FunEncoding.kJson, server_tcp_port, new TcpTransportOption());
-        // udp connect
         session.Connect(TransportProtocol.kUdp, FunEncoding.kJson, server_udp_port, new TransportOption());
     }
 
+    // session 이벤트 처리
     void OnSessionEvent(SessionEventType type, string session_id)
     {
-        FunDebug.Log("[EVENT] Session {0}.", type.ToString().ToLower().Substring(1));
-
+        Debug.Log("OnSessionEvent: " + type);
         switch(type)
         {
             case SessionEventType.kOpened:
-                // login
+                // 세션이 생성되면, 바로 로그인 한다.
                 Dictionary<string, object> body = new Dictionary<string, object>();
                 body["id"] = MyId;
                 state = STATE.INITED;
                 session.SendMessage("login", body);
                 break;
+            case SessionEventType.kClosed:
+                state = STATE.CLOSED;
+                break;
         }
     }
 
+    // transport 이벤트 처리
     void OnTransportEvent(TransportProtocol protocol, TransportEventType type)
     {
-        FunDebug.Log("[EVENT] Transport {0}.", type.ToString().ToLower().Substring(1));
-
-        switch(type)
+        Debug.Log("OnTransportEvent: " + protocol + " : " + type);
+        switch (type)
         {
             case TransportEventType.kDisconnected:
-                // reconnect
+                // 연결이 끊기면 재연결
                 session.Connect(protocol);
                 break;
             case TransportEventType.kConnectionFailed:
             case TransportEventType.kConnectionTimedOut:
-                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
-                break;
-            case TransportEventType.kStopped:
-                // 임시 처리 (이리로 오면 안되는거 아닌가?)
-                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
+                // 연결에 실패함
+                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), GameLogic.Instance.Quit);
                 break;
         }
     }
 
+    // 메세지 핸들러
     void OnReceive(string msg_type, object body)
     {
         Dictionary<string, object> message = body as Dictionary<string, object>;
@@ -90,22 +89,16 @@ public class NetworkManager : Singleton<NetworkManager>
         {
             case "login":
                 if(message["result"].Equals("ok"))
-                {
-                    // login ok
                     state = STATE.READY;
-                }
                 else
                 {
-                    // login failure
+                    // 로그인 실패
                     state = STATE.ERROR;
                     ModalWindow.Instance.Open("로그인 실패", "로그인에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
                 }
                 break;
             case "match":
-                if(message["result"].Equals("Success"))
-                    GameLogic.Instance.OnMatchSuccess(message);
-                else
-                    GameLogic.Instance.OnMatchFailed();
+                GameLogic.Instance.OnMatch(message);
                 break;
             case "start":
                 GameLogic.Instance.StartGame();
@@ -126,11 +119,6 @@ public class NetworkManager : Singleton<NetworkManager>
         if (body == null)
             body = new Dictionary<string, object>();
         session.SendMessage(messageType, body, protocol);
-    }
-
-    void OnSessionClosed()
-    {
-        state = STATE.CLOSED;
     }
 
     public void Stop()

@@ -20,11 +20,9 @@ public class GameLogic : Singleton<GameLogic>
         MENU,       // wait user input (click match button)
         MATCHING,   // matching..
         READY,      // ready for game
-        GAME,       // playing game
-        WIN,        // win a game
-        LOSE,       // lose a game
-
-        NONE
+        GAME,       // playing pong
+        WIN,
+        LOSE,
     }
     GAME_STATE state;
 
@@ -59,47 +57,47 @@ public class GameLogic : Singleton<GameLogic>
         NetworkManager.Instance.Send("match");
     }
 
-    // 매치 성공
-    public void OnMatchSuccess(Dictionary<string, object> message)
+    // 매칭 결과 처리
+    public void OnMatch(Dictionary<string, object> message)
     {
-        state = GAME_STATE.READY;
-
-        textLabel.gameObject.SetActive(false);
-        // 위치 초기화
-        myBar.gameObject.transform.localPosition = new Vector3(0, myBar.gameObject.transform.localPosition.y);
-        oppBar.gameObject.transform.localPosition = new Vector3(0, oppBar.gameObject.transform.localPosition.y);
-        ball.Reset();
-        gameRoot.SetActive(true);
-
-        if (message["A"].Equals(NetworkManager.Instance.MyId))
+        if (message["result"].Equals("Success"))
         {
-            upsideDown = false;
-            opponentId = message["B"] as string;
+            // 매칭 성공
+            state = GAME_STATE.READY;
+            textLabel.gameObject.SetActive(false);
+            // 위치 초기화
+            myBar.gameObject.transform.localPosition = new Vector3(0, myBar.gameObject.transform.localPosition.y);
+            oppBar.gameObject.transform.localPosition = new Vector3(0, oppBar.gameObject.transform.localPosition.y);
+            ball.Reset();
+            gameRoot.SetActive(true);
+
+            if (message["A"].Equals(NetworkManager.Instance.MyId))
+            {
+                upsideDown = false;
+                opponentId = message["B"] as string;
+            }
+            else
+            {
+                upsideDown = true;
+                opponentId = message["A"] as string;
+            }
+
+            textLabel.text = "준비!";
+            textLabel.gameObject.SetActive(true);
+
+            // 준비 완료 메세지 송신
+            Invoke("SendReady", 1);
         }
         else
         {
-            upsideDown = true;
-            opponentId = message["A"] as string;
+            // 매칭 실패
+            ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", RollbackToMenuPhase);
         }
-
-        textLabel.text = "준비!";
-        textLabel.gameObject.SetActive(true);
-
-        Invoke("SendReady", 1);
     }
 
-    void SendReady()
-    {
-        NetworkManager.Instance.Send("ready");
-    }
+    void SendReady() { NetworkManager.Instance.Send("ready"); }
 
-    // 매치 실패
-    public void OnMatchFailed()
-    {
-        ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", RollbackToMenuPhase);
-    }
-
-    // 
+    // 메뉴로 돌아감
     void RollbackToMenuPhase()
     {
         gameRoot.SetActive(false);
@@ -144,7 +142,6 @@ public class GameLogic : Singleton<GameLogic>
                     return;
                 lastBarTimeSeq = barTimeSeq;
             }
-            //int barX = (int)oppBar.transform.localPosition.x;
             float barX = Convert.ToSingle(message["barX"]);
             oppBar.transform.localPosition = new Vector3(-barX, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
         }
@@ -159,6 +156,7 @@ public class GameLogic : Singleton<GameLogic>
             Lose();
     }
 
+    // 승리 화면
     void Win()
     {
         if (state != GAME_STATE.GAME)
@@ -168,6 +166,7 @@ public class GameLogic : Singleton<GameLogic>
         state = GAME_STATE.WIN;
     }
 
+    // 패배 화면
     void Lose()
     {
         if (state != GAME_STATE.GAME)
@@ -184,6 +183,7 @@ public class GameLogic : Singleton<GameLogic>
             case GAME_STATE.INIT:
                 if (NetworkManager.Instance.state == NetworkManager.STATE.READY)
                 {
+                    // 세션 생성, 로그인 완료, 메뉴로
                     textLabel.gameObject.SetActive(false);
                     matchButton.gameObject.SetActive(true);
                     state = GAME_STATE.MENU;
@@ -202,8 +202,13 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
+
+
     void OnApplicationPause(bool isPaused)
     {
+        if (!networkEnabled)
+            return;
+
         if(isPaused)
         {
             NetworkManager.Instance.Stop();
