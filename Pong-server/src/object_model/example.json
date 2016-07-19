@@ -1,0 +1,14 @@
+{
+  "User": {
+    "Id": "String KEY",
+    "MyCharacter": "Character",
+    "tmp": "Integer"
+  },
+  "Character": {
+    "Name": "String KEY",
+    "Exp": "Integer",
+    "Level": "Integer",
+    "Hp": "Integer",
+    "Mp": "Integer"
+  }
+}
