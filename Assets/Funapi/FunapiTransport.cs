@@ -1,3 +1,5 @@
+// vim: tabstop=4 softtabstop=4 shiftwidth=4 expandtab
+//
 // Copyright 2013-2016 iFunFactory Inc. All Rights Reserved.
 //
 // This work is confidential and proprietary to iFunFactory Inc. and
@@ -49,9 +51,6 @@ namespace Fun
         kConnectFailed,
         kSendFailed,
         kReceiveFailed,
-        kEncryptionFailed,
-        kInvalidEncryption,
-        kUnknownEncryption,
         kRequestTimeout,
         kDisconnected,
         kExceptionError
@@ -76,9 +75,6 @@ namespace Fun
 
         // Disconnection
         internal abstract void Stop();
-
-        // Set Encryption type
-        internal abstract void SetEncryption (EncryptionType encryption);
 
         // Check connection
         internal abstract bool Started { get; }
@@ -703,7 +699,6 @@ namespace Fun
         {
             kUnknown = 0,
             kConnecting,
-            kEncryptionHandshaking,
             kConnected,
             kWaitForSession,
             kWaitForAck,
@@ -718,12 +713,6 @@ namespace Fun
             kRedirecting,
             kConnected
         };
-
-        internal enum EncryptionMethod
-        {
-            kNone = 0,
-            kIFunEngine1
-        }
 
 
         // constants.
@@ -780,7 +769,7 @@ namespace Fun
 
 
     // Transport class for socket
-    public abstract class FunapiEncryptedTransport : FunapiTransport
+    public abstract class FunapiDecodedTransport : FunapiTransport
     {
         // Starts a socket.
         internal override void Start()
@@ -862,36 +851,35 @@ namespace Fun
             }
         }
 
-        internal override void SetEncryption (EncryptionType encryption)
-        {
-            Encryptor encryptor = Encryptor.Create(encryption);
-            if (encryptor == null)
-            {
-                last_error_code_ = ErrorCode.kInvalidEncryption;
-                last_error_message_ = "Failed to create encryptor: " + encryption;
-                FunDebug.Log(last_error_message_);
-                event_.Add(OnFailure);
-                return;
-            }
-
-            default_encryptor_ = (int)encryption;
-            encryptors_[encryption] = encryptor;
-            FunDebug.Log("Set encryption type - {0}", default_encryptor_);
-        }
-
         internal virtual bool IsSendable
         {
             get { return sending_.Count == 0; }
         }
 
-        internal override void SendMessage (FunapiMessage fun_msg)
+        internal override void SendMessage (FunapiMessage msg_body)
         {
             try
             {
                 lock (sending_lock_)
                 {
-                    fun_msg.buffer = new ArraySegment<byte>(fun_msg.GetBytes(encoding_));
-                    pending_.Add(fun_msg);
+                    byte[] buffer = msg_body.GetBytes(encoding_);
+
+                    StringBuilder header = new StringBuilder();
+                    header.AppendFormat("{0}{1}{2}{3}", kVersionHeaderField, kHeaderFieldDelimeter, FunapiVersion.kProtocolVersion, kHeaderDelimeter);
+                	if (first_sending_)
+                    {
+                        header.AppendFormat("{0}{1}{2}{3}", kPluginVersionHeaderField, kHeaderFieldDelimeter, FunapiVersion.kPluginVersion, kHeaderDelimeter);
+                    	first_sending_ = false;
+                    }
+                    header.AppendFormat("{0}{1}{2}{3}", kLengthHeaderField, kHeaderFieldDelimeter, buffer.Length, kHeaderDelimeter);
+                    header.Append(kHeaderDelimeter);
+
+                    FunapiMessage msg_header = new FunapiMessage(msg_body.protocol, msg_body.msg_type, header);
+                    msg_header.buffer = new ArraySegment<byte>(System.Text.Encoding.ASCII.GetBytes(header.ToString()));
+                    msg_body.buffer = new ArraySegment<byte>(buffer);
+
+                    pending_.Add(msg_header);
+                    pending_.Add(msg_body);
 
                     if (Started && IsSendable)
                     {
@@ -904,89 +892,8 @@ namespace Fun
                 last_error_code_ = ErrorCode.kSendFailed;
                 last_error_message_ = "Failure in SendMessage: " + e.ToString();
                 FunDebug.Log(last_error_message_);
-                AddFailureCallback(fun_msg);
+                AddFailureCallback(msg_body);
             }
-        }
-
-        internal bool EncryptThenSendMessage()
-        {
-            FunDebug.Assert((int)state_ >= (int)State.kConnected);
-            FunDebug.Assert(sending_.Count > 0);
-
-            for (int i = 0; i < sending_.Count; i+=2)
-            {
-                FunapiMessage message = sending_[i];
-
-                EncryptionType encryption = message.enc_type;
-                if (encryption == EncryptionType.kDefaultEncryption)
-                    encryption = (EncryptionType)default_encryptor_;
-
-                Encryptor encryptor = null;
-                string encryption_header = "";
-                if ((int)encryption != kNoneEncryption)
-                {
-                    encryptor = encryptors_[encryption];
-                    if (encryptor == null)
-                    {
-                        last_error_code_ = ErrorCode.kUnknownEncryption;
-                        last_error_message_ = "Unknown encryption: " + encryption;
-                        FunDebug.Log(last_error_message_);
-                        AddFailureCallback(message);
-                        return false;
-                    }
-
-                    if (encryptor.state != Encryptor.State.kEstablished)
-                    {
-                        last_error_code_ = ErrorCode.kInvalidEncryption;
-                        last_error_message_ = string.Format("'{0}' is invalid encryption type. Check out the encryption type of server.", encryptor.name);
-                        FunDebug.Log(last_error_message_);
-                        AddFailureCallback(message);
-                        return false;
-                    }
-
-                    if (message.buffer.Count > 0)
-                    {
-                        Int64 nSize = encryptor.Encrypt(message.buffer, message.buffer, ref encryption_header);
-                        if (nSize <= 0)
-                        {
-                            last_error_code_ = ErrorCode.kEncryptionFailed;
-                            last_error_message_ = "Encrypt failure: " + encryptor.name;
-                            FunDebug.Log(last_error_message_);
-                            AddFailureCallback(message);
-                            return false;
-                        }
-
-                        FunDebug.Assert(nSize == message.buffer.Count);
-                    }
-                }
-
-                StringBuilder header = new StringBuilder();
-                header.AppendFormat("{0}{1}{2}{3}", kVersionHeaderField, kHeaderFieldDelimeter, FunapiVersion.kProtocolVersion, kHeaderDelimeter);
-                if (first_sending_)
-                {
-                    header.AppendFormat("{0}{1}{2}{3}", kPluginVersionHeaderField, kHeaderFieldDelimeter, FunapiVersion.kPluginVersion, kHeaderDelimeter);
-                    first_sending_ = false;
-                }
-                header.AppendFormat("{0}{1}{2}{3}", kLengthHeaderField, kHeaderFieldDelimeter, message.buffer.Count, kHeaderDelimeter);
-                if ((int)encryption != kNoneEncryption)
-                {
-                    FunDebug.Assert(encryptor != null);
-                    FunDebug.Assert(encryptor.encryption == encryption);
-                    header.AppendFormat("{0}{1}{2}", kEncryptionHeaderField, kHeaderFieldDelimeter, Convert.ToInt32(encryption));
-                    header.AppendFormat("-{0}{1}", encryption_header, kHeaderDelimeter);
-                }
-                header.Append(kHeaderDelimeter);
-
-                FunapiMessage header_buffer = new FunapiMessage(protocol_, message.msg_type, header);
-                header_buffer.buffer = new ArraySegment<byte>(System.Text.Encoding.ASCII.GetBytes(header.ToString()));
-                sending_.Insert(i, header_buffer);
-
-                //FunDebug.DebugLog("Header to send: {0}", header.ToString());
-            }
-
-            WireSend();
-
-            return true;
         }
 
         internal void SendPendingMessages ()
@@ -1006,7 +913,7 @@ namespace Fun
                     sending_ = pending_;
                     pending_ = tmp;
 
-                    EncryptThenSendMessage();
+                    WireSend();
                 }
             }
         }
@@ -1144,164 +1051,12 @@ namespace Fun
                 return false;
             }
 
-            // Encryption
-            string encryption_str = "";
-            string encryption_header;
-
-            if (header_fields_.TryGetValue(kEncryptionHeaderField, out encryption_header))
-            {
-                int index = encryption_header.IndexOf(kDelim1);
-                if (index != -1)
-                {
-                    encryption_str = encryption_header.Substring(0, index);
-                    encryption_header = encryption_header.Substring(index + 1);
-                }
-                else if (encryption_header != " ") // for HTTP header's blank
-                {
-                    encryption_str = encryption_header;
-                }
-            }
-
-            if (state_ == State.kEncryptionHandshaking)
-            {
-                FunDebug.Assert(body_length == 0);
-
-                if (encryption_str == kEncryptionHandshakeBegin)
-                {
-                    // Start handshake message.
-
-                    // encryption list
-                    List<EncryptionType> encryption_list = new List<EncryptionType>();
-
-                    if (encryption_header.Length > 0)
-                    {
-                        int begin = 0;
-                        int end = encryption_header.IndexOf(kDelim2);
-                        EncryptionType encryption;
-
-                        while (end != -1)
-                        {
-                            encryption = (EncryptionType)Convert.ToInt32(encryption_header.Substring(begin, end - begin));
-                            encryption_list.Add(encryption);
-                            begin = end + 1;
-                            end = encryption_header.IndexOf(kDelim2, begin);
-                        }
-
-                        encryption = (EncryptionType)Convert.ToInt32(encryption_header.Substring(begin));
-                        encryption_list.Add(encryption);
-                    }
-
-                    if (default_encryptor_ == kNoneEncryption && encryption_list.Count > 0)
-                    {
-                        default_encryptor_ = (int)encryption_list[0];
-                        FunDebug.Log("Set default encryption: {0}", default_encryptor_);
-                    }
-
-                    // Create encryptors
-                    foreach (EncryptionType type in encryption_list)
-                    {
-                        Encryptor encryptor = Encryptor.Create(type);
-                        if (encryptor == null)
-                        {
-                            FunDebug.Log("Failed to create encryptor: {0}", type);
-                            return false;
-                        }
-
-                        encryptors_[type] = encryptor;
-                    }
-                }
-                else
-                {
-                    // Encryption handshake message
-                    EncryptionType encryption = (EncryptionType)Convert.ToInt32(encryption_str);
-                    Encryptor encryptor = encryptors_[encryption];
-                    if (encryptor == null)
-                    {
-                        FunDebug.Log("Unknown encryption: {0}", encryption_str);
-                        return false;
-                    }
-
-                    if (encryptor.state != Encryptor.State.kHandshaking)
-                    {
-                        FunDebug.Log("Unexpected handshake message: {0}", encryptor.name);
-                        return false;
-                    }
-
-                    string out_header = "";
-                    if (!encryptor.Handshake(encryption_header, ref out_header))
-                    {
-                        FunDebug.Log("Encryption handshake failure: {0}", encryptor.name);
-                        return false;
-                    }
-
-                    if (out_header.Length > 0)
-                    {
-                        // TODO: Implementation
-                        FunDebug.Assert(false);
-                    }
-                    else
-                    {
-                        FunDebug.Assert(encryptor.state == Encryptor.State.kEstablished);
-                    }
-                }
-
-                bool handshake_complete = true;
-                foreach (KeyValuePair<EncryptionType, Encryptor> pair in encryptors_)
-                {
-                    if (pair.Value.state != Encryptor.State.kEstablished)
-                    {
-                        handshake_complete = false;
-                        break;
-                    }
-                }
-
-                if (handshake_complete)
-                {
-                    // Makes a state transition.
-                    state_ = State.kConnected;
-                    FunDebug.Log("Ready to receive.");
-
-                    event_.Add(OnHandshakeComplete);
-                }
-            }
-
             if (body_length > 0)
             {
                 if ((int)state_ < (int)State.kConnected)
                 {
                     FunDebug.Log("Unexpected message. state:{0}", state_);
                     return false;
-                }
-
-                if ((encryptors_.Count == 0) != (encryption_str.Length == 0))
-                {
-                    FunDebug.Log("Unknown encryption: {0}", encryption_str);
-                    return false;
-                }
-
-                if (encryptors_.Count > 0)
-                {
-                    EncryptionType encryption = (EncryptionType)Convert.ToInt32(encryption_str);
-                    Encryptor encryptor = encryptors_[encryption];
-
-                    if (encryptor == null)
-                    {
-                        FunDebug.Log("Unknown encryption: {0}", encryption_str);
-                        return false;
-                    }
-
-                    ArraySegment<byte> body_bytes = new ArraySegment<byte>(receive_buffer_, next_decoding_offset_, body_length);
-                    FunDebug.Assert(body_bytes.Count == body_length);
-
-                    Int64 nSize = encryptor.Decrypt(body_bytes, body_bytes, encryption_header);
-                    if (nSize <= 0)
-                    {
-                        FunDebug.Log("Failed to decrypt.");
-                        return false;
-                    }
-
-                    // TODO: Implementation
-                    FunDebug.Assert(body_length == nSize);
                 }
 
                 if (first_receiving_)
@@ -1326,23 +1081,10 @@ namespace Fun
             return true;
         }
 
-        // Sends messages & Calls start callback
-        private void OnHandshakeComplete ()
-        {
-            lock (sending_lock_)
-            {
-                if (Started && IsSendable)
-                {
-                    SendPendingMessages();
-                    OnStartedInternal();
-                }
-            }
-        }
-
         internal virtual void OnFailure()
         {
             FunDebug.Log("OnFailure({0}) - state: {1}\n{2}:{3}",
-                           str_protocol, state_, last_error_code_, last_error_message_);
+                         str_protocol, state_, last_error_code_, last_error_message_);
 
             if (state_ != State.kEstablished)
             {
@@ -1387,24 +1129,13 @@ namespace Fun
         // Funapi header-related constants.
         internal static readonly string kHeaderDelimeter = "\n";
         internal static readonly string kHeaderFieldDelimeter = ":";
-        internal static readonly string kVersionHeaderField = "VER";
         internal static readonly string kPluginVersionHeaderField = "PVER";
+        internal static readonly string kVersionHeaderField = "VER";
         internal static readonly string kLengthHeaderField = "LEN";
-        internal static readonly string kEncryptionHeaderField = "ENC";
-
-        // Encryption-related constants.
-        private static readonly string kEncryptionHandshakeBegin = "HELLO!";
-        private static readonly int kNoneEncryption = 0;
-        private static readonly char kDelim1 = '-';
-        private static readonly char kDelim2 = ',';
 
         // for speed-up.
         private static readonly ArraySegment<byte> kHeaderDelimeterAsNeedle = new ArraySegment<byte>(System.Text.Encoding.ASCII.GetBytes(kHeaderDelimeter));
         private static readonly char[] kHeaderFieldDelimeterAsChars = kHeaderFieldDelimeter.ToCharArray();
-
-        // Encryption-related.
-        internal int default_encryptor_ = kNoneEncryption;
-        internal Dictionary<EncryptionType, Encryptor> encryptors_ = new Dictionary<EncryptionType, Encryptor>();
 
         // Message-related.
         private int connect_timeout_id_ = 0;
@@ -1424,7 +1155,7 @@ namespace Fun
 
 
     // TCP transport layer
-    public class FunapiTcpTransport : FunapiEncryptedTransport
+    public class FunapiTcpTransport : FunapiDecodedTransport
     {
         public FunapiTcpTransport (string hostname_or_ip, UInt16 port, FunEncoding type)
         {
@@ -1539,11 +1270,12 @@ namespace Fun
                 }
                 FunDebug.Log("Connected.");
 
-                state_ = State.kEncryptionHandshaking;
+                state_ = State.kConnected;
+
+                OnStartedInternal();
 
                 lock (receive_lock_)
                 {
-                    // Wait for encryption handshaking message.
                     ArraySegment<byte> wrapped = new ArraySegment<byte>(receive_buffer_, 0, receive_buffer_.Length);
                     List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
                     buffer.Add(wrapped);
@@ -1725,7 +1457,7 @@ namespace Fun
 
 
     // UDP transport layer
-    public class FunapiUdpTransport : FunapiEncryptedTransport
+    public class FunapiUdpTransport : FunapiDecodedTransport
     {
         public FunapiUdpTransport (string hostname_or_ip, UInt16 port, FunEncoding type)
         {
@@ -1968,7 +1700,7 @@ namespace Fun
 
 
     // HTTP transport layer
-    public class FunapiHttpTransport : FunapiEncryptedTransport
+	public class FunapiHttpTransport : FunapiDecodedTransport
     {
         public FunapiHttpTransport(string hostname_or_ip, UInt16 port, bool https, FunEncoding type)
         {
@@ -2083,10 +1815,7 @@ namespace Fun
                         if (list[i].Length <= 0)
                             break;
 
-                        if (list[i] == kEncryptionHeaderField)
-                            headers.Add(kEncryptionHttpHeaderField, list[i+1]);
-                        else
-                            headers.Add(list[i], list[i+1]);
+                        headers.Add(list[i], list[i+1]);
                     }
 
                     if (str_cookie_.Length > 0)
@@ -2190,9 +1919,6 @@ namespace Fun
                     case "content-length":
                         body_length = Convert.ToInt32(value);
                         buffer.AppendFormat("{0}{1}{2}{3}", kLengthHeaderField, kHeaderFieldDelimeter, value, kHeaderDelimeter);
-                        break;
-                    case "x-ifun-enc":
-                        buffer.AppendFormat("{0}{1}{2}{3}", kEncryptionHeaderField, kHeaderFieldDelimeter, value, kHeaderDelimeter);
                         break;
                     default:
                         buffer.AppendFormat("{0}{1}{2}{3}", tuple[0], kHeaderFieldDelimeter, value, kHeaderDelimeter);
@@ -2510,10 +2236,8 @@ namespace Fun
 
 
         // Funapi header-related constants.
-        private static readonly string kEncryptionHttpHeaderField = "X-iFun-Enc";
-        private static readonly string kCookieHeaderField = "Cookie";
-
         private static readonly string[] kHeaderSeparator = { kHeaderFieldDelimeter, kHeaderDelimeter };
+        private static readonly string kCookieHeaderField = "Cookie";
 
         // waiting time for response
         private static readonly float kTimeoutSeconds = 30f;

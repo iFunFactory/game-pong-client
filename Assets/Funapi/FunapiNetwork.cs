@@ -753,32 +753,30 @@ namespace Fun
         }
 
         public void SendMessage (MessageType msg_type, object message,
-                                 EncryptionType encryption = EncryptionType.kDefaultEncryption,
                                  TransportProtocol protocol = TransportProtocol.kDefault,
                                  string expected_reply_type = null, float expected_reply_time = 0f,
                                  TimeoutEventHandler onReplyMissed = null)
         {
             string _msg_type = MessageTable.Lookup(msg_type);
-            SendMessage(_msg_type, message, encryption, protocol, expected_reply_type, expected_reply_time, onReplyMissed);
+            SendMessage(_msg_type, message, protocol, expected_reply_type, expected_reply_time, onReplyMissed);
         }
 
         public void SendMessage (MessageType msg_type, object message,
                                  string expected_reply_type, float expected_reply_time, TimeoutEventHandler onReplyMissed)
         {
             string _msg_type = MessageTable.Lookup(msg_type);
-            SendMessage(_msg_type, message, EncryptionType.kDefaultEncryption, GetMessageProtocol(_msg_type),
+            SendMessage(_msg_type, message, GetMessageProtocol(_msg_type),
                         expected_reply_type, expected_reply_time, onReplyMissed);
         }
 
         public void SendMessage (string msg_type, object message,
                                  string expected_reply_type, float expected_reply_time, TimeoutEventHandler onReplyMissed)
         {
-            SendMessage(msg_type, message, EncryptionType.kDefaultEncryption, GetMessageProtocol(msg_type),
+            SendMessage(msg_type, message, GetMessageProtocol(msg_type),
                         expected_reply_type, expected_reply_time, onReplyMissed);
         }
 
         public void SendMessage (string msg_type, object message,
-                                 EncryptionType encryption = EncryptionType.kDefaultEncryption,
                                  TransportProtocol protocol = TransportProtocol.kDefault,
                                  string expected_reply_type = null, float expected_reply_time = 0f,
                                  TimeoutEventHandler onReplyMissed = null)
@@ -806,7 +804,7 @@ namespace Fun
 
                 if (transport.Encoding == FunEncoding.kJson)
                 {
-                    fun_msg = new FunapiMessage(protocol, msg_type, FunapiMessage.JsonHelper.Clone(message), encryption);
+                    fun_msg = new FunapiMessage(protocol, msg_type, FunapiMessage.JsonHelper.Clone(message));
 
                     // Encodes a messsage type
                     FunapiMessage.JsonHelper.SetStringField(fun_msg.message, kMsgTypeBodyField, msg_type);
@@ -834,7 +832,7 @@ namespace Fun
                 }
                 else if (transport.Encoding == FunEncoding.kProtobuf)
                 {
-                    fun_msg = new FunapiMessage(protocol, msg_type, message, encryption);
+                    fun_msg = new FunapiMessage(protocol, msg_type, message);
 
                     FunMessage pbuf = fun_msg.message as FunMessage;
                     pbuf.msgtype = msg_type;
@@ -874,14 +872,14 @@ namespace Fun
                 if (transport.Encoding == FunEncoding.kJson)
                 {
                     if (transport == null)
-                        unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, message, encryption));
+                        unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, message));
                     else
                         unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type,
-                                                                FunapiMessage.JsonHelper.Clone(message), encryption));
+                                                                FunapiMessage.JsonHelper.Clone(message)));
                 }
                 else if (transport.Encoding == FunEncoding.kProtobuf)
                 {
-                    unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, message, encryption));
+                    unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, message));
                 }
 
                 FunDebug.Log("SendMessage - '{0}' message queued.", msg_type);
