@@ -30,7 +30,7 @@ public class NetworkManager : Singleton<NetworkManager>
     {
         // uid를 구해서 ID로 쓴다
 #if UNITY_EDITOR
-        MyId = SystemInfo.deviceUniqueIdentifier + "_Editor";
+        MyId = SystemInfo.deviceUniqueIdentifier + "_Editor";   // 에디터용
 #else
         MyId = SystemInfo.deviceUniqueIdentifier + "_" + SystemInfo.deviceType;
 #endif
@@ -76,7 +76,7 @@ public class NetworkManager : Singleton<NetworkManager>
             case TransportEventType.kConnectionFailed:
             case TransportEventType.kConnectionTimedOut:
                 // 연결에 실패함
-                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), GameLogic.Instance.Quit);
+                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), Application.Quit);
                 break;
         }
     }
@@ -94,7 +94,7 @@ public class NetworkManager : Singleton<NetworkManager>
                 {
                     // 로그인 실패
                     state = STATE.ERROR;
-                    ModalWindow.Instance.Open("로그인 실패", "로그인에 실패했습니다.\n게임을 다시 시작해 주세요.", GameLogic.Instance.Quit);
+                    ModalWindow.Instance.Open("로그인 실패", "로그인에 실패했습니다.\n게임을 다시 시작해 주세요.", Application.Quit);
                 }
                 break;
             case "match":
@@ -114,7 +114,7 @@ public class NetworkManager : Singleton<NetworkManager>
 
     public void Send(string messageType, Dictionary<string, object> body = null, TransportProtocol protocol = TransportProtocol.kDefault)
     {
-        if (!GameLogic.Instance.networkEnabled)
+        if (!GameLogic.Instance.isNetworkEnabled)
             return;
         if (body == null)
             body = new Dictionary<string, object>();

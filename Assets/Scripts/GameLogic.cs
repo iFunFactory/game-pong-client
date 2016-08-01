@@ -7,13 +7,13 @@ public class GameLogic : Singleton<GameLogic>
 {
     public Button matchButton;
     public Text textLabel;
+
     public GameObject gameRoot;
-
-    public bool networkEnabled = true;
-
     public GameObject myBar;
     public GameObject oppBar;
     public Ball ball;
+
+    public bool isNetworkEnabled = true;
 
     public enum GAME_STATE {
         INIT,       // init. game
@@ -21,19 +21,18 @@ public class GameLogic : Singleton<GameLogic>
         MATCHING,   // matching..
         READY,      // ready for game
         GAME,       // playing pong
-        WIN,
-        LOSE,
+        RESULT,     // result
     }
     GAME_STATE state;
 
     bool upsideDown = false;
-    string opponentId = "";
+    //string opponentId = "";
 
     float lastBarTimeSeq = 0;
 
     void Start()
     {
-        if(networkEnabled)
+        if(isNetworkEnabled)
         {
             state = GAME_STATE.INIT;
             NetworkManager.Instance.Init();
@@ -48,7 +47,6 @@ public class GameLogic : Singleton<GameLogic>
     // 매치 요청 버튼 클릭
     void OnMatchButtonClick()
     {
-        // 화면 구성
         matchButton.gameObject.SetActive(false);
         textLabel.text = "매칭 중입니다";
         textLabel.gameObject.SetActive(true);
@@ -74,14 +72,15 @@ public class GameLogic : Singleton<GameLogic>
             if (message["A"].Equals(NetworkManager.Instance.MyId))
             {
                 upsideDown = false;
-                opponentId = message["B"] as string;
+                //opponentId = message["B"] as string;
             }
             else
             {
                 upsideDown = true;
-                opponentId = message["A"] as string;
+                //opponentId = message["A"] as string;
             }
 
+            // ready
             textLabel.text = "준비!";
             textLabel.gameObject.SetActive(true);
 
@@ -91,14 +90,19 @@ public class GameLogic : Singleton<GameLogic>
         else
         {
             // 매칭 실패
-            ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", RollbackToMenuPhase);
+            // TODO: 상황에따른 예외처리
+            ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", Menu);
         }
     }
 
-    void SendReady() { NetworkManager.Instance.Send("ready"); }
+    // 준비 완료 메세지 송신
+    void SendReady()
+    {
+        NetworkManager.Instance.Send("ready");
+    }
 
-    // 메뉴로 돌아감
-    void RollbackToMenuPhase()
+    // 메뉴 화면
+    void Menu()
     {
         gameRoot.SetActive(false);
         textLabel.gameObject.SetActive(false);
@@ -111,8 +115,13 @@ public class GameLogic : Singleton<GameLogic>
     {
         textLabel.gameObject.SetActive(false);
         matchButton.gameObject.SetActive(false);
+
+        lastBarTimeSeq = 0;
+
         state = GAME_STATE.GAME;
 
+        // 공의 첫 움직임
+        // TODO: 랜덤하게 만들자
         if (upsideDown == true)
             ball.SetBallProperties(0, 0, 1.5f, -1.5f);
         else
@@ -122,60 +131,44 @@ public class GameLogic : Singleton<GameLogic>
     // 게임 중 정보 업데이트
     public void RelayMessageReceived(Dictionary<string, object> message)
     {
-        // ball의 정보가 업데이트됨
+        // 'ball'의 정보가 업데이트됨
         if (message.ContainsKey("ballX") && message.ContainsKey("ballY") && message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
         {
             float x = Convert.ToSingle(message["ballX"]);
             float y = Convert.ToSingle(message["ballY"]);
             float vx = Convert.ToSingle(message["ballVX"]);
             float vy = Convert.ToSingle(message["ballVY"]);
+            // 서로 화면을 뒤집어 보기 때문에, 전부 -로 변환필요
             ball.SetBallProperties(-x, -y, -vx, -vy);
         }
 
-        // 상대 bar의 위치가 변경됨
-        if (message.ContainsKey("barX"))
+        // 상대 'bar'의 위치가 변경됨
+        if (message.ContainsKey("barX") && message.ContainsKey("timeSeq"))
         {
-            if (message.ContainsKey("timeSeq"))
+            float barTimeSeq = Convert.ToSingle(message["timeSeq"]);
+            if (barTimeSeq > lastBarTimeSeq)
             {
-                float barTimeSeq = Convert.ToSingle(message["timeSeq"]);
-                if (barTimeSeq < lastBarTimeSeq)
-                    return;
                 lastBarTimeSeq = barTimeSeq;
+                float barX = Convert.ToSingle(message["barX"]);
+                oppBar.transform.localPosition = new Vector3(-barX, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
             }
-            float barX = Convert.ToSingle(message["barX"]);
-            oppBar.transform.localPosition = new Vector3(-barX, oppBar.transform.localPosition.y, oppBar.transform.localPosition.z);
         }
     }
 
-    // 서버의 결과 응답을 처리
+    // 서버의 게임 결과 응답 처리
     public void ResultMessageReceived(Dictionary<string, object> message)
     {
+        if (state != GAME_STATE.GAME)
+            return;
+        // 게임 결과 화면
+        gameRoot.SetActive(false);
         if (message["result"].Equals("win"))
-            Win();
+            ModalWindow.Instance.Open("결과", "승리했습니다!", Menu);
         else
-            Lose();
+            ModalWindow.Instance.Open("결과", "패배했습니다!", Menu);
+        state = GAME_STATE.RESULT;
     }
-
-    // 승리 화면
-    void Win()
-    {
-        if (state != GAME_STATE.GAME)
-            return;
-        gameRoot.SetActive(false);
-        ModalWindow.Instance.Open("결과", "승리했습니다!", RollbackToMenuPhase);
-        state = GAME_STATE.WIN;
-    }
-
-    // 패배 화면
-    void Lose()
-    {
-        if (state != GAME_STATE.GAME)
-            return;
-        gameRoot.SetActive(false);
-        ModalWindow.Instance.Open("결과", "패배했습니다!", RollbackToMenuPhase);
-        state = GAME_STATE.LOSE;
-    }
-
+    
     void Update()
     {
         switch (state)
@@ -184,14 +177,13 @@ public class GameLogic : Singleton<GameLogic>
                 if (NetworkManager.Instance.state == NetworkManager.STATE.READY)
                 {
                     // 세션 생성, 로그인 완료, 메뉴로
-                    textLabel.gameObject.SetActive(false);
-                    matchButton.gameObject.SetActive(true);
-                    state = GAME_STATE.MENU;
+                    Menu();
                 }
                 break;
             case GAME_STATE.GAME:
-                // 승패 처리
-                if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 80)
+                // 승패 처리, 패배시에만 보고함
+                // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
+                if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 100)
                 {
                     // 패배
                     Dictionary<string, object> message = new Dictionary<string, object>();
@@ -202,12 +194,15 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
-
-
+    // application delegates
+    #region APP_DELEGATES
     void OnApplicationPause(bool isPaused)
     {
-        if (!networkEnabled)
+        if (!isNetworkEnabled && isPaused)
+        {
+            Application.Quit();
             return;
+        }
 
         if(isPaused)
         {
@@ -226,11 +221,12 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
-    public void Quit()
+    void OnApplicationQuit()
     {
-        Application.Quit();
+        NetworkManager.Instance.Stop();
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.isPlaying = false;
 #endif
     }
+    #endregion
 }

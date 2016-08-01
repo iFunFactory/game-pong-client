@@ -1,7 +1,7 @@
 ﻿using UnityEngine;
 using UnityEngine.UI;
-using System.Collections;
 
+// 확인 팝업으로 사용할 modal window
 public class ModalWindow : MonoBehaviour
 {
     public Button okButton;
