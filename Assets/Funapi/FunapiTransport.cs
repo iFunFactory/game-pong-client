@@ -866,10 +866,10 @@ namespace Fun
 
                     StringBuilder header = new StringBuilder();
                     header.AppendFormat("{0}{1}{2}{3}", kVersionHeaderField, kHeaderFieldDelimeter, FunapiVersion.kProtocolVersion, kHeaderDelimeter);
-                	if (first_sending_)
+                    if (first_sending_)
                     {
                         header.AppendFormat("{0}{1}{2}{3}", kPluginVersionHeaderField, kHeaderFieldDelimeter, FunapiVersion.kPluginVersion, kHeaderDelimeter);
-                    	first_sending_ = false;
+                        first_sending_ = false;
                     }
                     header.AppendFormat("{0}{1}{2}{3}", kLengthHeaderField, kHeaderFieldDelimeter, buffer.Length, kHeaderDelimeter);
                     header.Append(kHeaderDelimeter);
@@ -1700,7 +1700,7 @@ namespace Fun
 
 
     // HTTP transport layer
-	public class FunapiHttpTransport : FunapiDecodedTransport
+    public class FunapiHttpTransport : FunapiDecodedTransport
     {
         public FunapiHttpTransport(string hostname_or_ip, UInt16 port, bool https, FunEncoding type)
         {

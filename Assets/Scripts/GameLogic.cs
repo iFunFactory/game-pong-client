@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 public class GameLogic : Singleton<GameLogic>
 {
-    public Button matchButton;
+    public Menu menu;
     public Text textLabel;
 
     public GameObject gameRoot;
@@ -30,9 +30,61 @@ public class GameLogic : Singleton<GameLogic>
 
     float lastBarTimeSeq = 0;
 
-    void Start()
+
+    void Update()
     {
-        if(isNetworkEnabled)
+        switch (state)
+        {
+        case GAME_STATE.INIT:
+            if (NetworkManager.Instance.IsReady)
+            {
+                // 세션 생성, 로그인 완료, 메뉴로
+                Menu();
+                menu.OnConnected();
+            }
+            break;
+
+        case GAME_STATE.GAME:
+            // 승패 처리, 패배시에만 보고함
+            // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
+            if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 100)
+            {
+                // 패배
+                Dictionary<string, object> message = new Dictionary<string, object>();
+                message["result"] = "lose";
+                NetworkManager.Instance.Send("result", message);
+            }
+            break;
+        }
+    }
+
+    // application delegates
+    #region APP_DELEGATES
+    void OnApplicationPause (bool isPaused)
+    {
+        if (!isNetworkEnabled && isPaused)
+        {
+            Application.Quit();
+            return;
+        }
+
+        if (isPaused)
+        {
+            menu.OnDisonnected();
+            NetworkManager.Instance.Stop();
+        }
+    }
+
+    void OnApplicationQuit()
+    {
+        NetworkManager.Instance.Stop();
+    }
+    #endregion
+
+
+    public void Connect()
+    {
+        if (isNetworkEnabled)
         {
             state = GAME_STATE.INIT;
             NetworkManager.Instance.Init();
@@ -44,13 +96,11 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
-    // 매치 요청 버튼 클릭
-    void OnMatchButtonClick()
+    public void RequestMatching()
     {
-        matchButton.gameObject.SetActive(false);
-        textLabel.text = "매칭 중입니다";
-        textLabel.gameObject.SetActive(true);
         state = GAME_STATE.MATCHING;
+        setStatusMessage("매칭 중입니다");
+
         // 매치 요청
         NetworkManager.Instance.Send("match");
     }
@@ -62,7 +112,10 @@ public class GameLogic : Singleton<GameLogic>
         {
             // 매칭 성공
             state = GAME_STATE.READY;
-            textLabel.gameObject.SetActive(false);
+
+            menu.SetActive(false);
+            setStatusMessage("");
+
             // 위치 초기화
             myBar.gameObject.transform.localPosition = new Vector3(0, myBar.gameObject.transform.localPosition.y);
             oppBar.gameObject.transform.localPosition = new Vector3(0, oppBar.gameObject.transform.localPosition.y);
@@ -81,8 +134,7 @@ public class GameLogic : Singleton<GameLogic>
             }
 
             // ready
-            textLabel.text = "준비!";
-            textLabel.gameObject.SetActive(true);
+            setStatusMessage("준비!");
 
             // 준비 완료 메세지 송신
             Invoke("SendReady", 1);
@@ -102,23 +154,24 @@ public class GameLogic : Singleton<GameLogic>
     }
 
     // 메뉴 화면
-    void Menu()
+    void Menu ()
     {
-        gameRoot.SetActive(false);
-        textLabel.gameObject.SetActive(false);
-        matchButton.gameObject.SetActive(true);
         state = GAME_STATE.MENU;
+
+        menu.SetActive(true);
+        menu.EnableMatchingButton();
+
+        gameRoot.SetActive(false);
+        setStatusMessage("");
     }
 
     // 게임 시작
     public void StartGame()
     {
-        textLabel.gameObject.SetActive(false);
-        matchButton.gameObject.SetActive(false);
-
+        state = GAME_STATE.GAME;
         lastBarTimeSeq = 0;
 
-        state = GAME_STATE.GAME;
+        setStatusMessage("");
 
         // 공의 첫 움직임
         // TODO: 랜덤하게 만들자
@@ -160,73 +213,19 @@ public class GameLogic : Singleton<GameLogic>
     {
         if (state != GAME_STATE.GAME)
             return;
+
         // 게임 결과 화면
+        state = GAME_STATE.RESULT;
         gameRoot.SetActive(false);
+
         if (message["result"].Equals("win"))
             ModalWindow.Instance.Open("결과", "승리했습니다!", Menu);
         else
             ModalWindow.Instance.Open("결과", "패배했습니다!", Menu);
-        state = GAME_STATE.RESULT;
     }
-    
-    void Update()
+
+    void setStatusMessage (string message)
     {
-        switch (state)
-        {
-            case GAME_STATE.INIT:
-                if (NetworkManager.Instance.state == NetworkManager.STATE.READY)
-                {
-                    // 세션 생성, 로그인 완료, 메뉴로
-                    Menu();
-                }
-                break;
-            case GAME_STATE.GAME:
-                // 승패 처리, 패배시에만 보고함
-                // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
-                if (ball.gameObject.transform.localPosition.y < myBar.transform.localPosition.y - 100)
-                {
-                    // 패배
-                    Dictionary<string, object> message = new Dictionary<string, object>();
-                    message["result"] = "lose";
-                    NetworkManager.Instance.Send("result", message);
-                }
-                break;
-        }
+        textLabel.text = message;
     }
-
-    // application delegates
-    #region APP_DELEGATES
-    void OnApplicationPause(bool isPaused)
-    {
-        if (!isNetworkEnabled && isPaused)
-        {
-            Application.Quit();
-            return;
-        }
-
-        if(isPaused)
-        {
-            NetworkManager.Instance.Stop();
-        }
-        else
-        {
-            state = GAME_STATE.INIT;
-            ModalWindow.Instance.Close();
-            matchButton.gameObject.SetActive(false);
-            gameRoot.SetActive(false);
-            textLabel.text = "접속 중입니다.";
-            textLabel.gameObject.SetActive(true);
-
-            NetworkManager.Instance.Init();
-        }
-    }
-
-    void OnApplicationQuit()
-    {
-        NetworkManager.Instance.Stop();
-#if UNITY_EDITOR
-        UnityEditor.EditorApplication.isPlaying = false;
-#endif
-    }
-    #endregion
 }
