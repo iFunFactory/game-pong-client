@@ -3,49 +3,52 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+
 public class NetworkManager : Singleton<NetworkManager>
 {
     // 서버 주소를 수정하세요.
-    const string server_addr = "carlos-vm";
+    const string kServerAddr = "127.0.0.1";
 
     // 서버 포트 정보
-    const ushort server_tcp_port = 8012;
-    const ushort server_udp_port = 8013;
-
-    public enum STATE
-    {
-        START,      // session is started (not initialized, not connected, not logined)
-        INITED,     // session initialized
-        READY,      // session is ready
-        CLOSED,     // session closed
-        ERROR,      // error occurred
-    }
-
-    STATE state;
-    FunapiSession session = null;
-
-    public string MyId { get; private set; }
-
-    public bool IsReady { get { return state == STATE.READY; } }
+    const ushort kServerTcpPort = 8012;
+    const ushort kServerUdpPort = 8013;
 
 
-    // 네트워크 초기화
-    public void Init ()
+    void Awake ()
     {
         // uid를 구해서 ID로 쓴다
 #if UNITY_EDITOR
-        MyId = SystemInfo.deviceUniqueIdentifier + "_Editor";   // 에디터용
+        myId = SystemInfo.deviceUniqueIdentifier + "_Editor";   // 에디터용
 #else
-        MyId = SystemInfo.deviceUniqueIdentifier + "_" + SystemInfo.deviceType;
+        myId = SystemInfo.deviceUniqueIdentifier + "_" + SystemInfo.deviceType;
 #endif
-        state = STATE.START;
-        session = FunapiSession.Create(server_addr, false);
-        session.SessionEventCallback += OnSessionEvent;
-        session.TransportEventCallback += OnTransportEvent;
-        session.ReceivedMessageCallback += OnReceive;
+    }
 
-        session.Connect(TransportProtocol.kTcp, FunEncoding.kJson, server_tcp_port, new TcpTransportOption());
-        session.Connect(TransportProtocol.kUdp, FunEncoding.kJson, server_udp_port, new TransportOption());
+    // 네트워크 초기화
+    public void Connect ()
+    {
+        state = STATE.START;
+
+        if (session == null)
+        {
+            session = FunapiSession.Create(kServerAddr, false);
+            session.SessionEventCallback += OnSessionEvent;
+            session.TransportEventCallback += OnTransportEvent;
+            session.ReceivedMessageCallback += OnReceive;
+
+            session.Connect(TransportProtocol.kTcp, FunEncoding.kJson, kServerTcpPort, new TcpTransportOption());
+            session.Connect(TransportProtocol.kUdp, FunEncoding.kJson, kServerUdpPort, new TransportOption());
+        }
+        else
+        {
+            session.Connect(TransportProtocol.kTcp);
+            session.Connect(TransportProtocol.kUdp);
+        }
+    }
+
+    public bool IsReady
+    {
+        get { return state == STATE.READY; }
     }
 
     public void Stop ()
@@ -54,9 +57,10 @@ public class NetworkManager : Singleton<NetworkManager>
             session.Close();
     }
 
-    public void Send (string messageType, Dictionary<string, object> body = null, TransportProtocol protocol = TransportProtocol.kDefault)
+    public void Send (string messageType, Dictionary<string, object> body = null,
+                      TransportProtocol protocol = TransportProtocol.kDefault)
     {
-        if (!GameLogic.Instance.isNetworkEnabled)
+        if (!GameLogic.Instance.isMultiPlay)
             return;
 
         if (body == null)
@@ -74,10 +78,11 @@ public class NetworkManager : Singleton<NetworkManager>
         switch (type)
         {
         case SessionEventType.kOpened:
+            state = STATE.INITED;
+
             // 세션이 생성되면, 바로 로그인 한다.
             Dictionary<string, object> body = new Dictionary<string, object>();
-            body["id"] = MyId;
-            state = STATE.INITED;
+            body["id"] = myId;
             session.SendMessage("login", body);
             break;
 
@@ -125,10 +130,26 @@ public class NetworkManager : Singleton<NetworkManager>
             }
             break;
         case "match":
-            GameLogic.Instance.OnMatch(message);
+            {
+                if (message["result"].Equals("Success"))
+                {
+                    // 매칭 성공
+
+                    bool bRoomMaster = false;
+                    if (message["A"].Equals(myId))
+                        bRoomMaster = true;
+
+                    GameLogic.Instance.OnMatch(bRoomMaster);
+                }
+                else
+                {
+                    // 매칭 실패
+                    ModalWindow.Instance.Open("매칭 실패", "매칭에 실패했습니다.", GameLogic.Instance.ShowMenu);
+                }
+            }
             break;
         case "start":
-            GameLogic.Instance.StartGame();
+            GameLogic.Instance.StartPlay();
             break;
         case "relay":
             GameLogic.Instance.RelayMessageReceived(message);
@@ -138,4 +159,18 @@ public class NetworkManager : Singleton<NetworkManager>
             break;
         }
     }
+
+
+    enum STATE
+    {
+        START,      // session is started (not initialized, not connected, not logined)
+        INITED,     // session initialized
+        READY,      // session is ready
+        CLOSED,     // session closed
+        ERROR,      // error occurred
+    }
+
+    STATE state;
+    string myId = "";
+    FunapiSession session = null;
 }

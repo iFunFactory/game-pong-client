@@ -7,7 +7,7 @@ public class Menu : MonoBehaviour
 {
     void Awake ()
     {
-        btnConnect = transform.FindChild("ConnectToServer").GetComponent<Button>();
+        btnStart = transform.FindChild("StartGame").GetComponent<Button>();
         btnMatching = transform.FindChild("StartMatching").GetComponent<Button>();
 
         btnMatching.interactable = false;
@@ -19,9 +19,9 @@ public class Menu : MonoBehaviour
         announceBoard.Show();
     }
 
-    public void OnConnectClicked ()
+    public void OnStartClicked ()
     {
-        GameLogic.Instance.Connect();
+        GameLogic.Instance.StartGame();
     }
 
     public void OnMatchingClicked ()
@@ -50,18 +50,18 @@ public class Menu : MonoBehaviour
 
     public void OnConnected ()
     {
-        btnConnect.interactable = false;
+        btnStart.interactable = false;
     }
 
     public void OnDisonnected ()
     {
-        btnConnect.interactable = true;
+        btnStart.interactable = true;
     }
 
 
     // Member variables.
     public AnnounceBoard announceBoard;
 
-    Button btnConnect = null;
+    Button btnStart = null;
     Button btnMatching = null;
 }

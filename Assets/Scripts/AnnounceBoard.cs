@@ -1,10 +1,15 @@
-﻿using System;
+﻿using Fun;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 
 public class AnnounceBoard : MonoBehaviour
 {
+    const string kServerAddr = "127.0.0.1";
+    const ushort kServerPort = 8080;
+
+
     void Awake ()
     {
         GameObject content = GameObject.FindWithTag("Content");
@@ -14,9 +19,9 @@ public class AnnounceBoard : MonoBehaviour
             content_rect_ = content.GetComponent<RectTransform>();
         }
 
-        announce_ = new Fun.FunapiAnnouncement();
+        announce_ = new FunapiAnnouncement();
         announce_.ResultCallback += onAnnouncementResult;
-        announce_.Init(string.Format("http://{0}:{1}", kServerIp, kServerPort));
+        announce_.Init(string.Format("http://{0}:{1}", kServerAddr, kServerPort));
     }
 
     void Update ()
@@ -45,9 +50,9 @@ public class AnnounceBoard : MonoBehaviour
         gameObject.SetActive(false);
     }
 
-    void onAnnouncementResult (Fun.AnnounceResult result)
+    void onAnnouncementResult (AnnounceResult result)
     {
-        if (result != Fun.AnnounceResult.kSuccess)
+        if (result != AnnounceResult.kSuccess)
             return;
 
         event_.Add(() => updateList());
@@ -122,16 +127,14 @@ public class AnnounceBoard : MonoBehaviour
     }
 
 
-    const string kServerIp = "127.0.0.1";
-    const UInt16 kServerPort = 8080;
     const float kViewHeight = 470f;
 
     // Member variables.
-    Fun.FunapiAnnouncement announce_ = null;
-    AnnounceBoardItem selected_item_ = null;
-    Fun.ThreadSafeEventList event_ = new Fun.ThreadSafeEventList();
-    List<AnnounceBoardItem> item_list_ = new List<AnnounceBoardItem>();
+    FunapiAnnouncement announce_ = null;
+    ThreadSafeEventList event_ = new ThreadSafeEventList();
 
-    Transform content_transform_ = null;
     RectTransform content_rect_ = null;
+    Transform content_transform_ = null;
+    AnnounceBoardItem selected_item_ = null;
+    List<AnnounceBoardItem> item_list_ = new List<AnnounceBoardItem>();
 }
