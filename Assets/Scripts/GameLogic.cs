@@ -17,6 +17,8 @@ public class GameLogic : Singleton<GameLogic>
 
     public bool isMultiPlay = false;
 
+    public string serverAddr = "127.0.0.1";
+
 
     // 메뉴 화면
     public void ShowMenu ()

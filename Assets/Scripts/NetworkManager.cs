@@ -6,9 +6,6 @@ using UnityEngine;
 
 public class NetworkManager : Singleton<NetworkManager>
 {
-    // 서버 주소를 수정하세요.
-    const string kServerAddr = "127.0.0.1";
-
     // 서버 포트 정보
     const ushort kServerTcpPort = 8012;
     const ushort kServerUdpPort = 8013;
@@ -31,7 +28,7 @@ public class NetworkManager : Singleton<NetworkManager>
 
         if (session == null)
         {
-            session = FunapiSession.Create(kServerAddr, false);
+            session = FunapiSession.Create(GameLogic.Instance.serverAddr, false);
             session.SessionEventCallback += OnSessionEvent;
             session.TransportEventCallback += OnTransportEvent;
             session.ReceivedMessageCallback += OnReceive;
