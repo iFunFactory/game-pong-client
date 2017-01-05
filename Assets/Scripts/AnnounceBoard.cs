@@ -1,17 +1,16 @@
 ﻿using Fun;
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-
 public class AnnounceBoard : MonoBehaviour
 {
-    const string kServerAddr = "127.0.0.1";
-    const ushort kServerPort = 8080;
+    private string kServerAddr = "127.0.0.1";
+    private const ushort kServerPort = 8080;
 
-
-    void Awake ()
+    private void Awake()
     {
+        kServerAddr = NetworkManager.Instance.kServerAddr;
+
         GameObject content = GameObject.FindWithTag("Content");
         if (content != null)
         {
@@ -24,18 +23,18 @@ public class AnnounceBoard : MonoBehaviour
         announce_.Init(string.Format("http://{0}:{1}", kServerAddr, kServerPort));
     }
 
-    void Update ()
+    private void Update()
     {
         event_.Update(Time.deltaTime);
     }
 
-    public void Show ()
+    public void Show()
     {
         gameObject.SetActive(true);
         announce_.UpdateList(10);
     }
 
-    public void SelectItem (AnnounceBoardItem item)
+    public void SelectItem(AnnounceBoardItem item)
     {
         if (selected_item_ != null)
             selected_item_.OnDeselect();
@@ -45,20 +44,20 @@ public class AnnounceBoard : MonoBehaviour
         measureContentSize();
     }
 
-    void OnClose ()
+    private void OnClose()
     {
         gameObject.SetActive(false);
     }
 
-    void onAnnouncementResult (AnnounceResult result)
+    private void onAnnouncementResult(AnnounceResult result)
     {
-        if (result != AnnounceResult.kSuccess)
+        if (result != AnnounceResult.kSucceeded)
             return;
 
         event_.Add(() => updateList());
     }
 
-    void updateList ()
+    private void updateList()
     {
         if (content_transform_ == null)
             return;
@@ -91,7 +90,7 @@ public class AnnounceBoard : MonoBehaviour
         }
     }
 
-    void removeAllItems ()
+    private void removeAllItems()
     {
         foreach (Transform t in content_transform_)
         {
@@ -100,7 +99,7 @@ public class AnnounceBoard : MonoBehaviour
         item_list_.Clear();
     }
 
-    void measureContentSize ()
+    private void measureContentSize()
     {
         if (content_rect_ == null)
             return;
@@ -126,15 +125,15 @@ public class AnnounceBoard : MonoBehaviour
         content_rect_.localPosition = new Vector3(0f, target_pos_y);
     }
 
-
-    const float kViewHeight = 470f;
+    private const float kViewHeight = 470f;
 
     // Member variables.
-    FunapiAnnouncement announce_ = null;
-    ThreadSafeEventList event_ = new ThreadSafeEventList();
+    private FunapiAnnouncement announce_ = null;
 
-    RectTransform content_rect_ = null;
-    Transform content_transform_ = null;
-    AnnounceBoardItem selected_item_ = null;
-    List<AnnounceBoardItem> item_list_ = new List<AnnounceBoardItem>();
+    private ThreadSafeEventList event_ = new ThreadSafeEventList();
+
+    private RectTransform content_rect_ = null;
+    private Transform content_transform_ = null;
+    private AnnounceBoardItem selected_item_ = null;
+    private List<AnnounceBoardItem> item_list_ = new List<AnnounceBoardItem>();
 }

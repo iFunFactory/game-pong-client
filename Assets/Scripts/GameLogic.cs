@@ -1,8 +1,7 @@
-﻿using UnityEngine;
-using UnityEngine.UI;
-using System;
+﻿using System;
 using System.Collections.Generic;
-
+using UnityEngine;
+using UnityEngine.UI;
 
 public class GameLogic : Singleton<GameLogic>
 {
@@ -21,11 +20,12 @@ public class GameLogic : Singleton<GameLogic>
 
 
     // 메뉴 화면
-    public void ShowMenu ()
+    public void ShowMenu()
     {
         state = GAME_STATE.MENU;
 
         menu.SetActive(true);
+        menu.OnDisableCancelMatchingBtn();
 
         if (isMultiPlay)
             menu.EnableMatchingButton();
@@ -34,7 +34,7 @@ public class GameLogic : Singleton<GameLogic>
         setStatusText("");
     }
 
-    public void StartGame ()
+    public void StartGame()
     {
         if (isMultiPlay)
         {
@@ -48,8 +48,9 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
+
     // 게임 시작
-    public void StartPlay ()
+    public void StartPlay()
     {
         state = GAME_STATE.GAME;
         lastBarTimeSeq = 0;
@@ -68,7 +69,7 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
-    public void RequestMatching ()
+    public void RequestMatching()
     {
         state = GAME_STATE.MATCHING;
         setStatusText("매칭 중입니다");
@@ -77,48 +78,54 @@ public class GameLogic : Singleton<GameLogic>
         NetworkManager.Instance.Send("match");
     }
 
+    public void RequestCancelMatching()
+    {
+        state = GAME_STATE.MENU;
 
-    void FixedUpdate ()
+        NetworkManager.Instance.Send("cancelmatch");
+    }
+
+    private void FixedUpdate()
     {
         switch (state)
         {
-        case GAME_STATE.INIT:
-            if (NetworkManager.Instance.IsReady)
-            {
-                // 세션 생성, 로그인 완료, 메뉴로
-                ShowMenu();
-                menu.OnConnected();
-            }
-            break;
-
-        case GAME_STATE.GAME:
-            if (isMultiPlay)
-            {
-                // 승패 처리, 패배시에만 보고함
-                // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
-                if (ball.transform.localPosition.y < myBar.transform.localPosition.y - kOutOfBounds)
+            case GAME_STATE.INIT:
+                if (NetworkManager.Instance.IsReady)
                 {
-                    Dictionary<string, object> message = new Dictionary<string, object>();
-                    message["result"] = "lose";
-                    NetworkManager.Instance.Send("result", message);
+                    // 세션 생성, 로그인 완료, 메뉴로
+                    ShowMenu();
+                    menu.OnConnected();
                 }
-            }
-            else
-            {
-                if (ball.transform.localPosition.y > oppBar.transform.localPosition.y + kOutOfBounds ||
-                    ball.transform.localPosition.y < myBar.transform.localPosition.y - kOutOfBounds)
-                {
-                    state = GAME_STATE.RESULT;
-                    gameRoot.SetActive(false);
+                break;
 
-                    ModalWindow.Instance.Open("PONG", "게임종료!", ShowMenu);
+            case GAME_STATE.GAME:
+                if (isMultiPlay)
+                {
+                    // 승패 처리, 패배시에만 보고함
+                    // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
+                    if (ball.transform.localPosition.y < myBar.transform.localPosition.y - kOutOfBounds)
+                    {
+                        Dictionary<string, object> message = new Dictionary<string, object>();
+                        message["result"] = "lose";
+                        NetworkManager.Instance.Send("result", message);
+                    }
                 }
-            }
-            break;
+                else
+                {
+                    if (ball.transform.localPosition.y > oppBar.transform.localPosition.y + kOutOfBounds ||
+                        ball.transform.localPosition.y < myBar.transform.localPosition.y - kOutOfBounds)
+                    {
+                        state = GAME_STATE.RESULT;
+                        gameRoot.SetActive(false);
+
+                        ModalWindow.Instance.Open("PONG", "게임종료!", ShowMenu);
+                    }
+                }
+                break;
         }
     }
 
-    void OnApplicationPause (bool isPaused)
+    private void OnApplicationPause(bool isPaused)
     {
         if (!isMultiPlay && isPaused)
         {
@@ -127,14 +134,13 @@ public class GameLogic : Singleton<GameLogic>
         }
     }
 
-    void OnApplicationQuit ()
+    private void OnApplicationQuit()
     {
         NetworkManager.Instance.Stop();
     }
 
-
     // 매칭 결과 처리
-    public void OnMatch (bool bMaster)
+    public void OnMatch(bool bMaster)
     {
         bRoomMaster = bMaster;
 
@@ -145,7 +151,7 @@ public class GameLogic : Singleton<GameLogic>
     }
 
     // 게임 중 정보 업데이트
-    public void RelayMessageReceived (Dictionary<string, object> message)
+    public void RelayMessageReceived(Dictionary<string, object> message)
     {
         // 'ball'의 정보가 업데이트됨
         if (message.ContainsKey("ballX") && message.ContainsKey("ballY") && message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
@@ -172,7 +178,7 @@ public class GameLogic : Singleton<GameLogic>
     }
 
     // 서버의 게임 결과 응답 처리
-    public void ResultMessageReceived (Dictionary<string, object> message)
+    public void ResultMessageReceived(Dictionary<string, object> message)
     {
         if (state != GAME_STATE.GAME)
             return;
@@ -187,7 +193,7 @@ public class GameLogic : Singleton<GameLogic>
             ModalWindow.Instance.Open("결과", "패배했습니다!", ShowMenu);
     }
 
-    void setReadyToPlay ()
+    private void setReadyToPlay()
     {
         state = GAME_STATE.READY;
 
@@ -203,21 +209,20 @@ public class GameLogic : Singleton<GameLogic>
         setStatusText("준비!");
     }
 
-    void setStatusText (string text)
+    private void setStatusText(string text)
     {
         textLabel.text = text;
     }
 
     // 준비 완료 메세지 송신
-    void sendReady ()
+    private void sendReady()
     {
         NetworkManager.Instance.Send("ready");
     }
 
+    private const float kOutOfBounds = 60f;
 
-    const float kOutOfBounds = 60f;
-
-    enum GAME_STATE
+    private enum GAME_STATE
     {
         INIT,       // init. game
         MENU,       // wait user input (click match button)
@@ -228,7 +233,7 @@ public class GameLogic : Singleton<GameLogic>
         RESULT,     // result
     }
 
-    GAME_STATE state;
-    bool bRoomMaster = false;
-    float lastBarTimeSeq = 0;
+    private GAME_STATE state;
+    private bool bRoomMaster = false;
+    private float lastBarTimeSeq = 0;
 }

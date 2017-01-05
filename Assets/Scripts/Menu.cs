@@ -9,8 +9,10 @@ public class Menu : MonoBehaviour
     {
         btnStart = transform.FindChild("StartGame").GetComponent<Button>();
         btnMatching = transform.FindChild("StartMatching").GetComponent<Button>();
+        btnCancelMatching = transform.FindChild("CancelMatching").GetComponent<Button>();
 
         btnMatching.interactable = false;
+        OnDisableCancelMatchingBtn();
     }
 
     public void OnAnnounceClicked ()
@@ -27,7 +29,14 @@ public class Menu : MonoBehaviour
     public void OnMatchingClicked ()
     {
         btnMatching.interactable = false;
+        btnCancelMatching.gameObject.SetActive(true);
+
         GameLogic.Instance.RequestMatching();
+    }
+
+    public void OnCancelMatchingClicked()
+    {
+        GameLogic.Instance.RequestCancelMatching();
     }
 
     public void OnQuitClicked ()
@@ -58,10 +67,15 @@ public class Menu : MonoBehaviour
         btnStart.interactable = true;
     }
 
+    public void OnDisableCancelMatchingBtn()
+    {
+        btnCancelMatching.gameObject.SetActive(false);
+    }
 
     // Member variables.
     public AnnounceBoard announceBoard;
 
     Button btnStart = null;
     Button btnMatching = null;
+    Button btnCancelMatching = null;
 }

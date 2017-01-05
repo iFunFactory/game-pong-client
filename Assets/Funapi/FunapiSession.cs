@@ -14,8 +14,9 @@ using UnityEngine;
 using System.Threading;
 #endif
 
-// Protobuf
+// protobuf
 using funapi.network.fun_message;
+using funapi.service.redirect_message;
 
 
 namespace Fun
@@ -23,8 +24,12 @@ namespace Fun
     public enum SessionEventType
     {
         kOpened,
+        kChanged,
+        kStopped,
         kClosed,
-        kChanged
+        kRedirectStarted,
+        kRedirectSucceeded,
+        kRedirectFailed
     };
 
 
@@ -44,7 +49,7 @@ namespace Fun
             server_address_ = hostname_or_ip;
             reliable_session_ = session_reliability;
 
-            InitSession();
+            initSession();
         }
 
         //
@@ -53,7 +58,7 @@ namespace Fun
         public void Connect (TransportProtocol protocol, FunEncoding encoding,
                              UInt16 port, TransportOption option = null)
         {
-            Transport transport = CreateTransport(protocol, encoding, port, option);
+            Transport transport = createTransport(protocol, encoding, port, option);
             if (transport == null)
                 return;
 
@@ -64,95 +69,123 @@ namespace Fun
         {
             if (!Started)
             {
-                FunDebug.Log("Starting a network module.");
+                Log("Starting a network module.");
 
                 lock (state_lock_)
                 {
                     state_ = State.kStarted;
                 }
 
-                CreateUpdater();
+                createUpdater();
             }
 
-            Transport transport = GetTransport(protocol);
-            if (transport == null || transport.started)
+            Transport transport = getTransport(protocol);
+            if (transport == null || transport.Started)
                 return;
 
-            event_list.Add(() => StartTransport(protocol));
+            event_list.Add(() => startTransport(protocol));
         }
 
-        public void Close ()
+        public void Reconnect ()
         {
-            StopAllTransports();
+            lock (transports_lock_)
+            {
+                foreach (TransportProtocol protocol in transports_.Keys)
+                {
+                    Connect(protocol);
+                }
+            }
         }
 
-        public void Close (TransportProtocol protocol)
+        public void Stop ()
         {
-            Transport transport = GetTransport(protocol);
+            if (!Started)
+                return;
+
+            stopAllTransports();
+        }
+
+        public void Stop (TransportProtocol protocol)
+        {
+            Transport transport = getTransport(protocol);
             if (transport == null || mono == null)
                 return;
 
 #if !NO_UNITY
-            mono.StartCoroutine(TryToStopTransport(transport));
+            mono.StartCoroutine(tryToStopTransport(transport));
 #else
-            mono.StartCoroutine(() => TryToStopTransport(transport));
+            mono.StartCoroutine(() => tryToStopTransport(transport));
 #endif
         }
 
-        public void SendMessage (MessageType msg_type, object message,
-                                 TransportProtocol protocol = TransportProtocol.kDefault)
+        [System.Obsolete("This will be deprecated January 2017. Use 'FunapiSession.Stop()' instead.")]
+        public void Close ()
         {
-            SendMessage(MessageTable.Lookup(msg_type), message, protocol);
+            Stop();
+        }
+
+        [System.Obsolete("This will be deprecated January 2017. Use 'FunapiSession.Stop(TransportProtocol)' instead.")]
+        public void Close (TransportProtocol protocol)
+        {
+            Stop(protocol);
+        }
+
+        public void SendMessage (MessageType msg_type, object message,
+                                 TransportProtocol protocol = TransportProtocol.kDefault,
+                                 EncryptionType enc_type = EncryptionType.kDefaultEncryption)
+        {
+            SendMessage(MessageTable.Lookup(msg_type), message, protocol, enc_type);
         }
 
         public void SendMessage (string msg_type, object message,
-                                 TransportProtocol protocol = TransportProtocol.kDefault)
+                                 TransportProtocol protocol = TransportProtocol.kDefault,
+                                 EncryptionType enc_type = EncryptionType.kDefaultEncryption)
         {
             if (protocol == TransportProtocol.kDefault)
                 protocol = default_protocol_;
 
-            Transport transport = GetTransport(protocol);
-            bool reliable_transport = IsReliableTransport(protocol);
+            Transport transport = getTransport(protocol);
+            bool reliable_transport = isReliableTransport(protocol);
 
             if (transport != null && transport.state == Transport.State.kEstablished &&
                 (reliable_transport == false || unsent_queue_.Count <= 0))
             {
                 FunapiMessage fun_msg = null;
-                bool sending_sequence = IsSendingSequence(transport);
+                bool sending_sequence = isSendingSequence(transport);
 
                 if (transport.encoding == FunEncoding.kJson)
                 {
-                    fun_msg = new FunapiMessage(protocol, msg_type, FunapiMessage.JsonHelper.Clone(message));
+                    fun_msg = new FunapiMessage(protocol, msg_type, json_helper_.Clone(message), enc_type);
 
                     // Encodes a messsage type
-                    FunapiMessage.JsonHelper.SetStringField(fun_msg.message, kMessageTypeField, msg_type);
+                    json_helper_.SetStringField(fun_msg.message, kMessageTypeField, msg_type);
 
                     // Encodes a session id, if any.
                     if (session_id_.Length > 0)
                     {
-                        FunapiMessage.JsonHelper.SetStringField(fun_msg.message, kSessionIdField, session_id_);
+                        json_helper_.SetStringField(fun_msg.message, kSessionIdField, session_id_);
                     }
 
                     if (reliable_transport || sending_sequence)
                     {
-                        UInt32 seq = GetNextSeq(protocol);
-                        FunapiMessage.JsonHelper.SetIntegerField(fun_msg.message, kSeqNumberField, seq);
+                        UInt32 seq = getNextSeq(protocol);
+                        json_helper_.SetIntegerField(fun_msg.message, kSeqNumberField, seq);
 
                         if (reliable_transport)
                             send_queue_.Enqueue(fun_msg);
 
-                        FunDebug.DebugLog("{0} send message - msgtype:{1} seq:{2}",
-                                          ConvertString(protocol), msg_type, seq);
+                        DebugLog("{0} send message - msgtype:{1} seq:{2}",
+                                 convertString(protocol), msg_type, seq);
                     }
                     else
                     {
-                        FunDebug.DebugLog("{0} send message - msgtype:{1}",
-                                          ConvertString(protocol), msg_type);
+                        DebugLog("{0} send message - msgtype:{1}",
+                                 convertString(protocol), msg_type);
                     }
                 }
                 else if (transport.encoding == FunEncoding.kProtobuf)
                 {
-                    fun_msg = new FunapiMessage(protocol, msg_type, message);
+                    fun_msg = new FunapiMessage(protocol, msg_type, message, enc_type);
 
                     FunMessage pbuf = fun_msg.message as FunMessage;
                     pbuf.msgtype = msg_type;
@@ -165,23 +198,23 @@ namespace Fun
 
                     if (reliable_transport || sending_sequence)
                     {
-                        pbuf.seq = GetNextSeq(protocol);
+                        pbuf.seq = getNextSeq(protocol);
 
                         if (reliable_transport)
                             send_queue_.Enqueue(fun_msg);
 
-                        FunDebug.DebugLog("{0} send message - msgtype:{1} seq:{2}",
-                                          ConvertString(protocol), msg_type, pbuf.seq);
+                        DebugLog("{0} send message - msgtype:{1} seq:{2}",
+                                 convertString(protocol), msg_type, pbuf.seq);
                     }
                     else
                     {
-                        FunDebug.DebugLog("{0} send message - msgtype:{1}",
-                                          ConvertString(protocol), msg_type);
+                        DebugLog("{0} send message - msgtype:{1}",
+                                 convertString(protocol), msg_type);
                     }
                 }
                 else
                 {
-                    FunDebug.LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
+                    LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
                     return;
                 }
 
@@ -192,25 +225,25 @@ namespace Fun
             {
                 if (transport.encoding == FunEncoding.kJson)
                 {
-                    unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, FunapiMessage.JsonHelper.Clone(message)));
+                    unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, json_helper_.Clone(message), enc_type));
                 }
                 else if (transport.encoding == FunEncoding.kProtobuf)
                 {
-                    unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, message));
+                    unsent_queue_.Enqueue(new FunapiMessage(protocol, msg_type, message, enc_type));
                 }
 
-                FunDebug.Log("SendMessage - '{0}' message queued.", msg_type);
+                Log("SendMessage - '{0}' message queued.", msg_type);
             }
             else
             {
                 StringBuilder strlog = new StringBuilder();
                 strlog.AppendFormat("SendMessage - '{0}' message skipped. ", msg_type);
                 if (transport == null)
-                    strlog.AppendFormat("There's no {0} transport.", ConvertString(protocol));
+                    strlog.AppendFormat("There's no {0} transport.", convertString(protocol));
                 else if (transport.state != Transport.State.kEstablished)
                     strlog.AppendFormat("Transport's state is '{0}'.", transport.state);
 
-                FunDebug.Log(strlog.ToString());
+                Log(strlog.ToString());
             }
         }
 
@@ -223,12 +256,12 @@ namespace Fun
             {
                 if (expected_responses_.ContainsKey(msg_type))
                 {
-                    FunDebug.LogWarning("'{0}' expected response type is already added. Ignored.");
+                    LogWarning("'{0}' expected response type is already added. Ignored.");
                     return;
                 }
 
                 expected_responses_[msg_type] = new ExpectedResponse(msg_type, waiting_time);
-                FunDebug.DebugLog("Expected response message added - '{0}' ({1}s)", msg_type, waiting_time);
+                DebugLog("Expected response message added - '{0}' ({1}s)", msg_type, waiting_time);
             }
         }
 
@@ -239,7 +272,7 @@ namespace Fun
                 if (expected_responses_.ContainsKey(msg_type))
                 {
                     expected_responses_.Remove(msg_type);
-                    FunDebug.DebugLog("Expected response message removed - {0}", msg_type);
+                    DebugLog("Expected response message removed - {0}", msg_type);
                 }
             }
         }
@@ -257,7 +290,7 @@ namespace Fun
         {
             get { return default_protocol_; }
             set { default_protocol_ = value;
-                  FunDebug.Log("The default protocol is '{0}'", ConvertString(value)); }
+                  Log("The default protocol is '{0}'", convertString(value)); }
         }
 
         public bool Started
@@ -267,16 +300,33 @@ namespace Fun
 
         public bool Connected
         {
-            get {  lock (state_lock_) { return state_ == State.kConnected; } }
+            get { lock (state_lock_) { return state_ == State.kConnected; } }
+        }
+
+        public bool HasUnsentMessages
+        {
+            get
+            {
+                lock (transports_lock_)
+                {
+                    foreach (Transport transport in transports_.Values)
+                    {
+                        if (transport.HasUnsentMessages)
+                            return true;
+                    }
+                }
+
+                return false;
+            }
         }
 
 
         //
         // Derived function from FunapiUpdater
         //
-        protected override bool Update (float deltaTime)
+        protected override bool onUpdate (float deltaTime)
         {
-            if (!base.Update(deltaTime))
+            if (!base.onUpdate(deltaTime))
                 return false;
 
             if (!Started)
@@ -284,33 +334,45 @@ namespace Fun
 
             lock (transports_lock_)
             {
-                if (transports_.Count > 0)
+                foreach (Transport transport in transports_.Values)
                 {
-                    foreach (Transport transport in transports_.Values)
-                    {
-                        if (transport != null)
-                            transport.Update(deltaTime);
-                    }
+                    transport.Update(deltaTime);
                 }
             }
 
-            UpdateMessages();
-            UpdateExpectedResponse(deltaTime);
+            updateMessages();
+            updateExpectedResponse(deltaTime);
 
             return true;
         }
 
-        void UpdateMessages ()
+        protected override void onQuit ()
+        {
+            lock (state_lock_)
+            {
+                state_ = State.kUnknown;
+            }
+
+            stopAllTransports(true);
+            onSessionEvent(SessionEventType.kStopped);
+        }
+
+
+
+        //
+        // Update-close-related functions
+        //
+        void updateMessages ()
         {
             lock (message_lock_)
             {
                 if (message_buffer_.Count > 0)
                 {
-                    FunDebug.DebugLog("Update messages. count: {0}", message_buffer_.Count);
+                    DebugLog("Update messages. count: {0}", message_buffer_.Count);
 
                     foreach (FunapiMessage message in message_buffer_)
                     {
-                        ProcessMessage(message);
+                        processMessage(message);
                     }
 
                     message_buffer_.Clear();
@@ -318,7 +380,7 @@ namespace Fun
             }
         }
 
-        void UpdateExpectedResponse (float deltaTime)
+        void updateExpectedResponse (float deltaTime)
         {
             lock (expected_response_lock)
             {
@@ -333,7 +395,7 @@ namespace Fun
                         er.wait_time -= deltaTime;
                         if (er.wait_time <= 0f)
                         {
-                            FunDebug.Log("'{0}' message waiting time has been exceeded.", er.type);
+                            Log("'{0}' message waiting time has been exceeded.", er.type);
                             remove_list.Add(er.type);
 
                             if (ResponseTimeoutCallback != null)
@@ -366,28 +428,39 @@ namespace Fun
             }
         }
 
-        void OnClose ()
+        void onStopped ()
         {
-            ReleaseUpdater();
-            UpdateMessages();
+            if (!Started)
+                return;
+
+            lock (state_lock_)
+            {
+                if (reliable_session_ || wait_redirect_)
+                    state_ = State.kStopped;
+                else
+                    state_ = State.kUnknown;
+            }
+
+            if (!wait_redirect_)
+            {
+                releaseUpdater();
+            }
+
+            updateMessages();
 
             lock (expected_response_lock)
             {
-                if (expected_responses_.Count > 0)
-                    expected_responses_.Clear();
+                expected_responses_.Clear();
             }
-        }
 
-        protected override void OnQuit ()
-        {
-            StopAllTransports(true);
+            onSessionEvent(SessionEventType.kStopped);
         }
 
 
         //
         // Session-related functions
         //
-        void InitSession()
+        void initSession()
         {
             session_id_ = "";
 
@@ -402,30 +475,25 @@ namespace Fun
             http_seq_ = (UInt32)rnd_.Next() + (UInt32)rnd_.Next();
         }
 
-        void SetSessionId (string session_id)
+        void setSessionId (string session_id)
         {
             if (session_id_.Length == 0)
             {
-                FunDebug.Log("New session id: {0}", session_id);
-                OpenSession(session_id);
-
-                if (SessionEventCallback != null)
-                    SessionEventCallback(SessionEventType.kOpened, session_id_);
+                Log("New session id: {0}", session_id);
+                openSession(session_id);
+                onSessionEvent(SessionEventType.kOpened);
             }
 
             if (session_id_ != session_id)
             {
-                FunDebug.Log("Session id changed: {0} => {1}", session_id_, session_id);
+                Log("Session id changed: {0} => {1}", session_id_, session_id);
 
-                CloseSession();
-                OpenSession(session_id);
-
-                if (SessionEventCallback != null)
-                    SessionEventCallback(SessionEventType.kChanged, session_id_);
+                session_id_ = session_id;
+                onSessionEvent(SessionEventType.kChanged);
             }
         }
 
-        void OpenSession (string session_id)
+        void openSession (string session_id)
         {
             lock (state_lock_)
             {
@@ -439,51 +507,198 @@ namespace Fun
             {
                 foreach (Transport transport in transports_.Values)
                 {
-                    if (transport.state == Transport.State.kWaitForSession)
+                    if (transport.state == Transport.State.kWaitForSessionId)
                     {
-                        SetTransportStarted(transport, false);
+                        setTransportStarted(transport, false);
                     }
                 }
             }
 
             if (unsent_queue_.Count > 0)
             {
-                SendUnsentMessages();
+                sendUnsentMessages();
             }
         }
 
-        void CloseSession ()
+        void closeSession ()
         {
-            lock (state_lock_)
+            unsent_queue_.Clear();
+
+            lock (transports_lock_)
             {
-                state_ = State.kUnknown;
+                foreach (Transport transport in transports_.Values)
+                {
+                    transport.SetAbolish();
+                }
             }
 
             if (session_id_.Length == 0)
                 return;
 
-            if (SessionEventCallback != null)
-                SessionEventCallback(SessionEventType.kClosed, session_id_);
+            onSessionEvent(SessionEventType.kClosed);
 
-            InitSession();
+            initSession();
+        }
+
+        void onSessionEvent (SessionEventType type)
+        {
+            if (wait_redirect_)
+            {
+                DebugLog("Session - '{0}' event callback skipped.", type);
+                return;
+            }
+
+            Log("EVENT: Session ({0}).", type);
+
+            if (SessionEventCallback != null)
+                SessionEventCallback(type, session_id_);
+        }
+
+
+        //
+        // Redirect-related functions
+        //
+        bool startRedirect (string host, List<RedirectInfo> list)
+        {
+            // Notify start to redirect.
+            onSessionEvent(SessionEventType.kRedirectStarted);
+
+            wait_redirect_ = true;
+            server_address_ = host;
+
+            // Stopping all.
+            stopAllTransports(true);
+            closeSession();
+
+#if !NO_UNITY
+            mono.StartCoroutine(tryToRedirect(list));
+#else
+            mono.StartCoroutine(() => tryToRedirect(list));
+#endif
+            return true;
+        }
+
+#if !NO_UNITY
+        IEnumerator tryToRedirect (List<RedirectInfo> list)
+#else
+        void tryToRedirect (List<RedirectInfo> list)
+#endif
+        {
+            // Wait for stop.
+            while (Started)
+            {
+#if !NO_UNITY
+                yield return new WaitForSeconds(0.1f);
+#else
+                Thread.Sleep(100);
+#endif
+            }
+
+            // Removes transports.
+            lock (transports_lock_)
+            {
+                transports_.Clear();
+            }
+            default_protocol_ = TransportProtocol.kDefault;
+
+            // Adds transports.
+            foreach (RedirectInfo info in list)
+            {
+                Connect(info.protocol, info.encoding, info.port, info.option);
+            }
+
+            // Wait for connect.
+            while (true)
+            {
+                bool be_wait = false;
+                lock (transports_lock_)
+                {
+                    foreach (Transport transport in transports_.Values)
+                    {
+                        if (!transport.Started || transport.Connecting || transport.Reconnecting)
+                        {
+                            be_wait = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!be_wait)
+                    break;
+#if !NO_UNITY
+                yield return new WaitForSeconds(0.2f);
+#else
+                Thread.Sleep(200);
+#endif
+            }
+
+            // Check success.
+            bool succeeded = true;
+            lock (transports_lock_)
+            {
+                foreach (Transport transport in transports_.Values)
+                {
+                    if (transport.state != Transport.State.kEstablished)
+                    {
+                        succeeded = false;
+                        break;
+                    }
+                }
+            }
+
+            if (succeeded)
+            {
+                // Sending token.
+                Transport transport = getTransport(default_protocol_);
+                sendRedirectToken(transport, redirect_token_);
+            }
+            else
+            {
+                wait_redirect_ = false;
+                onRedirectFailed();
+            }
+        }
+
+        void sendRedirectToken (Transport transport, string token)
+        {
+            if (transport == null || token.Length <= 0)
+                return;
+
+            if (transport.encoding == FunEncoding.kJson)
+            {
+                object msg = FunapiMessage.Deserialize("{}");
+                json_helper_.SetStringField(msg, kMessageTypeField, kRedirectConnectType);
+                json_helper_.SetStringField(msg, kSessionIdField, session_id_);
+                json_helper_.SetStringField(msg, "token", token);
+                SendMessage(kRedirectConnectType, msg, transport.protocol);
+            }
+            else if (transport.encoding == FunEncoding.kProtobuf)
+            {
+                FunRedirectConnectMessage msg = new FunRedirectConnectMessage();
+                msg.token = token;
+                FunMessage funmsg = FunapiMessage.CreateFunMessage(msg, MessageType._cs_redirect_connect);
+                funmsg.msgtype = kRedirectConnectType;
+                funmsg.sid = session_id_;
+                SendMessage(kRedirectConnectType, funmsg, transport.protocol);
+            }
+        }
+
+        void onRedirectFailed ()
+        {
+            Stop();
+            onSessionEvent(SessionEventType.kRedirectFailed);
         }
 
 
         //
         // Transport-related functions
         //
-        Transport CreateTransport (TransportProtocol protocol, FunEncoding encoding,
+        Transport createTransport (TransportProtocol protocol, FunEncoding encoding,
                                    UInt16 port, TransportOption option = null)
         {
-            Transport transport = GetTransport(protocol);
+            Transport transport = getTransport(protocol);
             if (transport != null)
-            {
-#if !NO_UNITY
-                FunDebug.LogWarning("CreateTransport - {0} transport already exists.",
-                                    ConvertString(protocol));
-#endif
                 return transport;
-            }
 
             if (option == null)
             {
@@ -494,7 +709,7 @@ namespace Fun
                 else if (protocol == TransportProtocol.kHttp)
                     option = new HttpTransportOption();
 
-                FunDebug.Log("{0} transport use the 'default option'.", ConvertString(protocol));
+                Log("{0} transport use the 'default option'.", convertString(protocol));
             }
 
             if (protocol == TransportProtocol.kTcp)
@@ -508,26 +723,27 @@ namespace Fun
             }
             else if (protocol == TransportProtocol.kHttp)
             {
-                HttpTransport http_transport = new HttpTransport(server_address_, port, false, encoding);
+                bool https = ((HttpTransportOption)option).Https;
+                HttpTransport http_transport = new HttpTransport(server_address_, port, https, encoding);
                 transport = http_transport;
             }
             else
             {
-                FunDebug.LogError("Create a {0} transport failed.", ConvertString(protocol));
+                LogError("Create a {0} transport failed.", convertString(protocol));
                 return null;
             }
 
-            transport.SetOption(option);
+            transport.option = option;
 
             // Callback functions
-            transport.StartedCallback += OnTransportStarted;
-            transport.StoppedCallback += OnTransportStopped;
-            transport.ReceivedCallback += OnTransportReceived;
-            transport.TransportErrorCallback += OnTransportError;
+            transport.StartedCallback += onTransportStarted;
+            transport.StoppedCallback += onTransportStopped;
+            transport.ReceivedCallback += onTransportReceived;
+            transport.TransportErrorCallback += onTransportError;
 
-            transport.ConnectionFailedCallback += OnConnectionFailed;
-            transport.ConnectionTimeoutCallback += OnConnectionTimedOut;
-            transport.DisconnectedCallback += OnDisconnected;
+            transport.ConnectionFailedCallback += onConnectionFailed;
+            transport.ConnectionTimeoutCallback += onConnectionTimedOut;
+            transport.DisconnectedCallback += onDisconnected;
 
             lock (transports_lock_)
             {
@@ -537,17 +753,38 @@ namespace Fun
             if (default_protocol_ == TransportProtocol.kDefault)
                 DefaultProtocol = protocol;
 
-            FunDebug.DebugLog("{0} transport added.", ConvertString(protocol));
+            DebugLog("{0} transport added.", convertString(protocol));
             return transport;
         }
 
-        void StartTransport (TransportProtocol protocol)
+        TransportOption getTransportOption (string flavor, TransportProtocol protocol)
         {
-            Transport transport = GetTransport(protocol);
+            TransportOption option = null;
+
+            // Get option from transport option callback.
+            if (TransportOptionCallback != null)
+                option = TransportOptionCallback(flavor, protocol);
+
+            if (option == null)
+            {
+                // Find transport's option.
+                lock (transports_lock_)
+                {
+                    if (transports_.ContainsKey(protocol))
+                        option = transports_[protocol].option;
+                }
+            }
+
+            return option;
+        }
+
+        void startTransport (TransportProtocol protocol)
+        {
+            Transport transport = getTransport(protocol);
             if (transport == null)
                 return;
 
-            FunDebug.Log("Starting {0} transport.", ConvertString(protocol));
+            Log("Starting {0} transport.", convertString(protocol));
 
             if (transport.protocol == TransportProtocol.kHttp)
             {
@@ -557,45 +794,45 @@ namespace Fun
             transport.Start();
         }
 
-        void StopTransport (Transport transport)
+        void stopTransport (Transport transport)
         {
             if (transport == null || transport.state == Transport.State.kUnknown)
                 return;
 
-            FunDebug.Log("Stopping {0} transport.", ConvertString(transport.protocol));
+            Log("Stopping {0} transport.", convertString(transport.protocol));
 
             transport.Stop();
         }
 
-        void SetTransportStarted (Transport transport, bool send_unsent = true)
+        void setTransportStarted (Transport transport, bool send_unsent = true)
         {
             if (transport == null)
                 return;
 
             transport.SetEstablish(session_id_);
 
-            OnTransportEvent(transport.protocol, TransportEventType.kStarted);
+            onTransportEvent(transport.protocol, TransportEventType.kStarted);
 
             if (send_unsent && unsent_queue_.Count > 0)
             {
-                SendUnsentMessages();
+                sendUnsentMessages();
             }
         }
 
-        void CheckTransportStatus (TransportProtocol protocol)
+        void checkTransportStatus (TransportProtocol protocol)
         {
             if (!Started)
                 return;
 
             lock (state_lock_)
             {
-                if (state_ == State.kWaitForSession && protocol == first_sending_protocol_)
+                if (state_ == State.kWaitForSessionId && protocol == first_sending_protocol_)
                 {
-                    Transport transport = FindConnectedTransport(protocol);
+                    Transport transport = findConnectedTransport(protocol);
                     if (transport != null)
                     {
-                        transport.state = Transport.State.kWaitForSession;
-                        SendFirstMessage(transport);
+                        transport.state = Transport.State.kWaitForSessionId;
+                        sendFirstMessage(transport);
                     }
                     else
                     {
@@ -609,7 +846,7 @@ namespace Fun
             {
                 foreach (Transport t in transports_.Values)
                 {
-                    if (t.started || t.reconnecting)
+                    if (t.Started || t.Reconnecting)
                     {
                         all_stopped = false;
                         break;
@@ -619,24 +856,13 @@ namespace Fun
 
             if (all_stopped)
             {
-                lock (state_lock_)
-                {
-                    if (reliable_session_)
-                        state_ = State.kStopped;
-                    else
-                        state_ = State.kUnknown;
-                }
-
-                event_list.Add(() => OnClose());
+                event_list.Add(() => onStopped());
             }
         }
 
-        void StopAllTransports (bool force_stop = false)
+        void stopAllTransports (bool force_stop = false)
         {
-            if (!Started)
-                return;
-
-            FunDebug.Log("Stopping a network module.");
+            Log("Stopping a network module.");
 
             if (force_stop)
             {
@@ -645,7 +871,7 @@ namespace Fun
                 {
                     foreach (Transport transport in transports_.Values)
                     {
-                        StopTransport(transport);
+                        stopTransport(transport);
                     }
                 }
             }
@@ -659,9 +885,9 @@ namespace Fun
                     foreach (Transport transport in transports_.Values)
                     {
 #if !NO_UNITY
-                        mono.StartCoroutine(TryToStopTransport(transport));
+                        mono.StartCoroutine(tryToStopTransport(transport));
 #else
-                        mono.StartCoroutine(() => TryToStopTransport(transport));
+                        mono.StartCoroutine(() => tryToStopTransport(transport));
 #endif
                     }
                 }
@@ -669,26 +895,25 @@ namespace Fun
         }
 
 #if !NO_UNITY
-        IEnumerator TryToStopTransport (Transport transport)
+        IEnumerator tryToStopTransport (Transport transport)
 #else
-            void TryToStopTransport (Transport transport)
+        void tryToStopTransport (Transport transport)
 #endif
         {
             if (transport == null)
 #if !NO_UNITY
                 yield break;
 #else
-            return;
+                return;
 #endif
 
             // Checks transport's state.
-            while (transport.in_process)
+            while (transport.InProcess)
             {
                 lock (state_lock_)
                 {
-                    FunDebug.Log("{0} Stop waiting... ({1})",
-                                 ConvertString(transport.protocol),
-                                 transport.has_unsent_messages ? "sending" : "0");
+                    Log("{0} Stop waiting... ({1})", convertString(transport.protocol),
+                        transport.HasUnsentMessages ? "sending" : "0");
 
 #if !NO_UNITY
                     yield return new WaitForSeconds(0.1f);
@@ -698,41 +923,59 @@ namespace Fun
                 }
             }
 
-            StopTransport(transport);
+            stopTransport(transport);
         }
 
-        void OnTransportEvent (TransportProtocol protocol, TransportEventType type)
+        void onTransportEvent (TransportProtocol protocol, TransportEventType type)
         {
+            if (wait_redirect_)
+            {
+                DebugLog("{0} transport - '{1}' event callback skipped.",
+                         convertString(protocol), type);
+                return;
+            }
+
+            Log("EVENT: {0} transport ({1}).", convertString(protocol), type);
+
             if (TransportEventCallback != null)
                 TransportEventCallback(protocol, type);
         }
 
-        void OnTransportError (TransportProtocol protocol, TransportError.Type type, string message)
+        void onTransportError (TransportProtocol protocol, TransportError.Type type, string message)
         {
-            if (TransportErrorCallback == null)
+            if (wait_redirect_)
+            {
+                DebugLog("{0} transport - '{1}' error callback skipped.\n{2}",
+                         convertString(protocol), type, message);
                 return;
+            }
 
-            TransportError error = new TransportError();
-            error.type = type;
-            error.message = message;
+            Log("ERROR: {0} transport ({1})\n{2}.", convertString(protocol), type, message);
 
-            TransportErrorCallback(protocol, error);
+            if (TransportErrorCallback != null)
+            {
+                TransportError error = new TransportError();
+                error.type = type;
+                error.message = message;
+
+                TransportErrorCallback(protocol, error);
+            }
         }
 
-        bool IsReliableTransport (TransportProtocol protocol)
+        bool isReliableTransport (TransportProtocol protocol)
         {
             return reliable_session_ && protocol == TransportProtocol.kTcp;
         }
 
-        bool IsSendingSequence (Transport transport)
+        bool isSendingSequence (Transport transport)
         {
             if (transport == null || transport.protocol == TransportProtocol.kUdp)
                 return false;
 
-            return transport.sequence_validation;
+            return transport.SequenceValidation;
         }
 
-        Transport GetTransport (TransportProtocol protocol)
+        Transport getTransport (TransportProtocol protocol)
         {
             lock (transports_lock_)
             {
@@ -740,14 +983,10 @@ namespace Fun
                     return transports_[protocol];
             }
 
-#if !NO_UNITY
-            FunDebug.DebugLog("GetTransport - Can't find {0} transport.",
-                              ConvertString(protocol));
-#endif
             return null;
         }
 
-        Transport FindConnectedTransport (TransportProtocol except_protocol)
+        Transport findConnectedTransport (TransportProtocol except_protocol)
         {
             lock (transports_lock_)
             {
@@ -756,7 +995,7 @@ namespace Fun
 
                 foreach (Transport transport in transports_.Values)
                 {
-                    if (transport.protocol != except_protocol && transport.started)
+                    if (transport.protocol != except_protocol && transport.Started)
                     {
                         return transport;
                     }
@@ -770,9 +1009,9 @@ namespace Fun
         //
         // Transport-related callback functions
         //
-        void OnTransportStarted (TransportProtocol protocol)
+        void onTransportStarted (TransportProtocol protocol)
         {
-            Transport transport = GetTransport(protocol);
+            Transport transport = getTransport(protocol);
             if (transport == null)
                 return;
 
@@ -782,90 +1021,90 @@ namespace Fun
                 {
                     state_ = State.kConnected;
 
-                    if (IsReliableTransport(protocol) && seq_recvd_ != 0)
+                    if (isReliableTransport(protocol) && seq_recvd_ != 0)
                     {
                         transport.state = Transport.State.kWaitForAck;
-                        SendAck(transport, seq_recvd_ + 1);
+                        sendAck(transport, seq_recvd_ + 1);
                     }
                     else
                     {
-                        SetTransportStarted(transport);
+                        setTransportStarted(transport);
                     }
                 }
                 else if (state_ == State.kStarted || state_ == State.kStopped)
                 {
-                    state_ = State.kWaitForSession;
-                    transport.state = Transport.State.kWaitForSession;
+                    state_ = State.kWaitForSessionId;
+                    transport.state = Transport.State.kWaitForSessionId;
 
                     // To get a session id
-                    SendFirstMessage(transport);
+                    sendFirstMessage(transport);
                 }
-                else if (state_ == State.kWaitForSession)
+                else if (state_ == State.kWaitForSessionId)
                 {
-                    transport.state = Transport.State.kWaitForSession;
+                    transport.state = Transport.State.kWaitForSessionId;
                 }
             }
         }
 
-        void OnTransportStopped (TransportProtocol protocol)
+        void onTransportStopped (TransportProtocol protocol)
         {
-            Transport transport = GetTransport(protocol);
+            Transport transport = getTransport(protocol);
             if (transport == null)
                 return;
 
-            FunDebug.Log("{0} transport stopped.", ConvertString(protocol));
+            Log("{0} transport stopped.", convertString(protocol));
 
-            CheckTransportStatus(protocol);
-            OnTransportEvent(protocol, TransportEventType.kStopped);
+            checkTransportStatus(protocol);
+            onTransportEvent(protocol, TransportEventType.kStopped);
         }
 
-        void OnTransportError (TransportProtocol protocol)
+        void onTransportError (TransportProtocol protocol)
         {
-            Transport transport = GetTransport(protocol);
+            Transport transport = getTransport(protocol);
             if (transport == null)
                 return;
 
-            OnTransportError(protocol, transport.last_error_code, transport.last_error_message);
+            onTransportError(protocol, transport.LastErrorCode, transport.LastErrorMessage);
         }
 
-        void OnConnectionFailed (TransportProtocol protocol)
+        void onConnectionFailed (TransportProtocol protocol)
         {
-            FunDebug.Log("{0} transport connection failed.", ConvertString(protocol));
+            Log("{0} transport connection failed.", convertString(protocol));
 
-            CheckTransportStatus(protocol);
-            OnTransportEvent(protocol, TransportEventType.kConnectionFailed);
+            checkTransportStatus(protocol);
+            onTransportEvent(protocol, TransportEventType.kConnectionFailed);
         }
 
-        void OnConnectionTimedOut (TransportProtocol protocol)
+        void onConnectionTimedOut (TransportProtocol protocol)
         {
-            FunDebug.Log("{0} transport connection timed out.", ConvertString(protocol));
+            Log("{0} transport connection timed out.", convertString(protocol));
 
-            StopTransport(GetTransport(protocol));
+            stopTransport(getTransport(protocol));
 
-            OnTransportEvent(protocol, TransportEventType.kConnectionTimedOut);
+            onTransportEvent(protocol, TransportEventType.kConnectionTimedOut);
         }
 
-        void OnDisconnected (TransportProtocol protocol)
+        void onDisconnected (TransportProtocol protocol)
         {
-            FunDebug.Log("{0} transport disconnected.", ConvertString(protocol));
+            Log("{0} transport disconnected.", convertString(protocol));
 
-            CheckTransportStatus(protocol);
-            OnTransportEvent(protocol, TransportEventType.kDisconnected);
+            checkTransportStatus(protocol);
+            onTransportEvent(protocol, TransportEventType.kDisconnected);
         }
 
 
         //
         // Sending-related functions
         //
-        void SendFirstMessage (Transport transport)
+        void sendFirstMessage (Transport transport)
         {
             if (transport == null)
                 return;
 
             first_sending_protocol_ = transport.protocol;
 
-            FunDebug.DebugLog("{0} sending a empty message for getting to session id.",
-                              ConvertString(transport.protocol));
+            DebugLog("{0} sending a empty message for getting to session id.",
+                     convertString(transport.protocol));
 
             if (transport.encoding == FunEncoding.kJson)
             {
@@ -879,18 +1118,19 @@ namespace Fun
             }
         }
 
-        void SendAck (Transport transport, UInt32 ack)
+        void sendAck (Transport transport, UInt32 ack)
         {
             if (!Connected || transport == null)
                 return;
 
-            FunDebug.DebugLog("{0} send ack message - ack:{1}", ConvertString(transport.protocol), ack);
+            DebugLog("{0} send ack message - ack:{1}",
+                     convertString(transport.protocol), ack);
 
             if (transport.encoding == FunEncoding.kJson)
             {
                 object ack_msg = FunapiMessage.Deserialize("{}");
-                FunapiMessage.JsonHelper.SetStringField(ack_msg, kSessionIdField, session_id_);
-                FunapiMessage.JsonHelper.SetIntegerField(ack_msg, kAckNumberField, ack);
+                json_helper_.SetStringField(ack_msg, kSessionIdField, session_id_);
+                json_helper_.SetIntegerField(ack_msg, kAckNumberField, ack);
                 transport.SendMessage(new FunapiMessage(transport.protocol, "", ack_msg));
             }
             else if (transport.encoding == FunEncoding.kProtobuf)
@@ -902,51 +1142,51 @@ namespace Fun
             }
         }
 
-        void SendUnsentMessages()
+        void sendUnsentMessages()
         {
             if (unsent_queue_.Count <= 0)
                 return;
 
-            FunDebug.Log("SendUnsentMessages - {0} unsent messages.", unsent_queue_.Count);
+            Log("sendUnsentMessages - {0} unsent messages.", unsent_queue_.Count);
 
             foreach (FunapiMessage msg in unsent_queue_)
             {
-                Transport transport = GetTransport(msg.protocol);
+                Transport transport = getTransport(msg.protocol);
                 if (transport == null || transport.state != Transport.State.kEstablished)
                 {
-                    FunDebug.Log("SendUnsentMessages - {0} transport is invalid. '{1}' message skipped.",
-                                 ConvertString(msg.protocol), msg.msg_type);
+                    Log("sendUnsentMessages - {0} transport is invalid. '{1}' message skipped.",
+                        convertString(msg.protocol), msg.msg_type);
                     continue;
                 }
 
-                bool reliable_transport = IsReliableTransport(transport.protocol);
-                bool sending_sequence = IsSendingSequence(transport);
+                bool reliable_transport = isReliableTransport(transport.protocol);
+                bool sending_sequence = isSendingSequence(transport);
 
                 if (transport.encoding == FunEncoding.kJson)
                 {
                     object json = msg.message;
 
                     // Encodes a messsage type
-                    FunapiMessage.JsonHelper.SetStringField(json, kMessageTypeField, msg.msg_type);
+                    json_helper_.SetStringField(json, kMessageTypeField, msg.msg_type);
 
                     if (session_id_.Length > 0)
-                        FunapiMessage.JsonHelper.SetStringField(json, kSessionIdField, session_id_);
+                        json_helper_.SetStringField(json, kSessionIdField, session_id_);
 
                     if (reliable_transport || sending_sequence)
                     {
-                        UInt32 seq = GetNextSeq(transport.protocol);
-                        FunapiMessage.JsonHelper.SetIntegerField(json, kSeqNumberField, seq);
+                        UInt32 seq = getNextSeq(transport.protocol);
+                        json_helper_.SetIntegerField(json, kSeqNumberField, seq);
 
                         if (reliable_transport)
                             send_queue_.Enqueue(msg);
 
-                        FunDebug.Log("{0} send unsent message - msgtype:{1} seq:{2}",
-                                     ConvertString(transport.protocol), msg.msg_type, seq);
+                        Log("{0} send unsent message - msgtype:{1} seq:{2}",
+                            convertString(transport.protocol), msg.msg_type, seq);
                     }
                     else
                     {
-                        FunDebug.Log("{0} send unsent message - msgtype:{1}",
-                                     ConvertString(transport.protocol), msg.msg_type);
+                        Log("{0} send unsent message - msgtype:{1}",
+                            convertString(transport.protocol), msg.msg_type);
                     }
                 }
                 else if (transport.encoding == FunEncoding.kProtobuf)
@@ -959,18 +1199,18 @@ namespace Fun
 
                     if (reliable_transport || sending_sequence)
                     {
-                        pbuf.seq = GetNextSeq(transport.protocol);
+                        pbuf.seq = getNextSeq(transport.protocol);
 
                         if (reliable_transport)
                             send_queue_.Enqueue(msg);
 
-                        FunDebug.Log("{0} send unsent message - msgtype:{1} seq:{2}",
-                                     ConvertString(transport.protocol), msg.msg_type, pbuf.seq);
+                        Log("{0} send unsent message - msgtype:{1} seq:{2}",
+                            convertString(transport.protocol), msg.msg_type, pbuf.seq);
                     }
                     else
                     {
-                        FunDebug.Log("{0} send unsent message - msgtype:{1}",
-                                     ConvertString(transport.protocol), msg.msg_type);
+                        Log("{0} send unsent message - msgtype:{1}",
+                            convertString(transport.protocol), msg.msg_type);
                     }
                 }
 
@@ -984,9 +1224,9 @@ namespace Fun
         //
         // Receiving-related functions
         //
-        void OnTransportReceived (FunapiMessage message)
+        void onTransportReceived (FunapiMessage message)
         {
-            FunDebug.DebugLog("OnTransportReceived - type: {0}", message.msg_type);
+            DebugLog("onTransportReceived - type: {0}", message.msg_type);
 
             lock (message_lock_)
             {
@@ -994,38 +1234,16 @@ namespace Fun
             }
         }
 
-        void OnProcessMessage (string msg_type, object message)
-        {
-            if (msg_type == kSessionOpenedType)
-            {
-                return;
-            }
-            else if (msg_type == kSessionClosedType)
-            {
-                FunDebug.Log("Session timed out. Resetting session id.");
-
-                StopAllTransports();
-                CloseSession();
-            }
-            else
-            {
-                RemoveResponseTimeout(msg_type);
-
-                if (ReceivedMessageCallback != null)
-                    ReceivedMessageCallback(msg_type, message);
-            }
-        }
-
-        void ProcessMessage (FunapiMessage msg)
+        void processMessage (FunapiMessage msg)
         {
             object message = msg.message;
             if (message == null)
             {
-                FunDebug.Log("ProcessMessage - '{0}' message is null.", msg.msg_type);
+                Log("processMessage - '{0}' message is null.", msg.msg_type);
                 return;
             }
 
-            Transport transport = GetTransport(msg.protocol);
+            Transport transport = getTransport(msg.protocol);
             if (transport == null)
                 return;
 
@@ -1036,38 +1254,33 @@ namespace Fun
             {
                 try
                 {
-                    session_id = FunapiMessage.JsonHelper.GetStringField(message, kSessionIdField) as string;
-                    FunapiMessage.JsonHelper.RemoveStringField(message, kSessionIdField);
-                    SetSessionId(session_id);
+                    session_id = json_helper_.GetStringField(message, kSessionIdField);
+                    json_helper_.RemoveField(message, kSessionIdField);
+                    setSessionId(session_id);
 
-                    if (IsReliableTransport(msg.protocol))
+                    if (isReliableTransport(msg.protocol))
                     {
-                        if (FunapiMessage.JsonHelper.HasField(message, kAckNumberField))
+                        if (json_helper_.HasField(message, kAckNumberField))
                         {
-                            UInt32 ack = (UInt32)FunapiMessage.JsonHelper.GetIntegerField(message, kAckNumberField);
-                            OnAckReceived(transport, ack);
+                            UInt32 ack = (UInt32)json_helper_.GetIntegerField(message, kAckNumberField);
+                            onAckReceived(transport, ack);
                             return;
                         }
 
-                        if (FunapiMessage.JsonHelper.HasField(message, kSeqNumberField))
+                        if (json_helper_.HasField(message, kSeqNumberField))
                         {
-                            UInt32 seq = (UInt32)FunapiMessage.JsonHelper.GetIntegerField(message, kSeqNumberField);
-                            if (!OnSeqReceived(transport, seq))
+                            UInt32 seq = (UInt32)json_helper_.GetIntegerField(message, kSeqNumberField);
+                            if (!onSeqReceived(transport, seq))
                                 return;
 
-                            FunapiMessage.JsonHelper.RemoveStringField(message, kSeqNumberField);
+                            json_helper_.RemoveField(message, kSeqNumberField);
                         }
                     }
                 }
                 catch (Exception e)
                 {
-                    FunDebug.LogError("Failure in ProcessMessage: {0}", e.ToString());
+                    LogError("Failure in processMessage: {0}", e.ToString());
                     return;
-                }
-
-                if (msg_type.Length > 0)
-                {
-                    OnProcessMessage(msg_type, message);
                 }
             }
             else if (transport.encoding == FunEncoding.kProtobuf)
@@ -1077,43 +1290,180 @@ namespace Fun
                 try
                 {
                     session_id = funmsg.sid;
-                    SetSessionId(session_id);
+                    setSessionId(session_id);
 
-                    if (IsReliableTransport(msg.protocol))
+                    if (isReliableTransport(msg.protocol))
                     {
                         if (funmsg.ackSpecified)
                         {
-                            OnAckReceived(transport, funmsg.ack);
+                            onAckReceived(transport, funmsg.ack);
                             return;
                         }
 
                         if (funmsg.seqSpecified)
                         {
-                            if (!OnSeqReceived(transport, funmsg.seq))
+                            if (!onSeqReceived(transport, funmsg.seq))
                                 return;
                         }
                     }
                 }
                 catch (Exception e)
                 {
-                    FunDebug.LogError("Failure in ProcessMessage: {0}", e.ToString());
+                    LogError("Failure in processMessage: {0}", e.ToString());
                     return;
-                }
-
-                if (msg_type.Length > 0)
-                {
-                    OnProcessMessage(msg_type, funmsg);
                 }
             }
             else
             {
-                FunDebug.LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
+                LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
                 return;
+            }
+
+            if (msg_type.Length > 0)
+            {
+                if (msg_type == kRedirectType)
+                {
+                    onRedirectMessage(transport, message);
+                    return;
+                }
+                else if (msg_type == kRedirectConnectType)
+                {
+                    onRedirectResultMessage(transport, message);
+                    return;
+                }
+
+                onProcessMessage(msg_type, message);
             }
 
             if (transport.state == Transport.State.kWaitForAck && session_id_.Length > 0)
             {
-                SetTransportStarted(transport);
+                setTransportStarted(transport);
+            }
+        }
+
+        void onRedirectMessage (Transport transport, object message)
+        {
+            string host = "";
+            string token = "";
+            string flavor = "";
+            List<RedirectInfo> info_list = new List<RedirectInfo>();
+
+            if (transport.encoding == FunEncoding.kJson)
+            {
+                host = json_helper_.GetStringField(message, "host");
+                token = json_helper_.GetStringField(message, "token");
+                flavor = json_helper_.GetStringField(message, "flavor");
+
+                object list = json_helper_.GetObject(message, "ports");
+                int count = json_helper_.GetArrayCount(list);
+                for (int i = 0; i < count; ++i)
+                {
+                    object item = json_helper_.GetArrayObject(list, i);
+                    RedirectInfo info = new RedirectInfo();
+                    info.protocol = (TransportProtocol)json_helper_.GetIntegerField(item, "protocol");
+                    info.encoding = (FunEncoding)json_helper_.GetIntegerField(item, "encoding");
+                    info.port = (ushort)json_helper_.GetIntegerField(item, "port");
+                    info.option = getTransportOption(flavor, info.protocol);
+                    info_list.Add(info);
+                }
+            }
+            else if (transport.encoding == FunEncoding.kProtobuf)
+            {
+                FunMessage msg = message as FunMessage;
+                object obj = FunapiMessage.GetMessage(msg, MessageType._sc_redirect);
+                if (obj == null)
+                    return;
+
+                FunRedirectMessage redirect = obj as FunRedirectMessage;
+                host = redirect.host;
+                token = redirect.token;
+                flavor = redirect.flavor;
+
+                foreach (FunRedirectMessage.ServerPort item in redirect.ports)
+                {
+                    RedirectInfo info = new RedirectInfo();
+                    info.protocol = (TransportProtocol)item.protocol;
+                    info.encoding = (FunEncoding)item.encoding;
+                    info.port = (ushort)item.port;
+                    info.option = getTransportOption(flavor, info.protocol);
+                    info_list.Add(info);
+                }
+            }
+
+            if (host.Length <= 0 || token.Length <= 0)
+            {
+                LogWarning("onRedirectMessage - Invalid host or token.\nhost:{0}, token:{1}",
+                           host, token);
+                return;
+            }
+
+            if (info_list.Count <= 0)
+            {
+                LogWarning("onRedirectMessage - Server port list is empty.");
+                return;
+            }
+
+            redirect_token_ = token;
+
+            startRedirect(host, info_list);
+        }
+
+        void onRedirectResultMessage (Transport transport, object message)
+        {
+            wait_redirect_ = false;
+
+            if (transport.encoding == FunEncoding.kJson)
+            {
+                RedirectResult result = (RedirectResult)json_helper_.GetIntegerField(message, "result");
+                if (result == RedirectResult.kSucceeded)
+                {
+                    onSessionEvent(SessionEventType.kRedirectSucceeded);
+                }
+                else
+                {
+                    LogWarning("Redirect failed. error code: {0}", result);
+                    onRedirectFailed();
+                }
+            }
+            else if (transport.encoding == FunEncoding.kProtobuf)
+            {
+                FunMessage msg = message as FunMessage;
+                object obj = FunapiMessage.GetMessage(msg, MessageType._cs_redirect_connect);
+                if (obj == null)
+                    return;
+
+                FunRedirectConnectMessage redirect = obj as FunRedirectConnectMessage;
+                if (redirect.result == FunRedirectConnectMessage.Result.OK)
+                {
+                    onSessionEvent(SessionEventType.kRedirectSucceeded);
+                }
+                else
+                {
+                    LogWarning("Redirect failed. error code: {0}", redirect.result);
+                    onRedirectFailed();
+                }
+            }
+        }
+
+        void onProcessMessage (string msg_type, object message)
+        {
+            if (msg_type == kSessionOpenedType)
+            {
+                return;
+            }
+            else if (msg_type == kSessionClosedType)
+            {
+                Log("Session timed out. Resetting session id.");
+
+                stopAllTransports(true);
+                closeSession();
+            }
+            else
+            {
+                RemoveResponseTimeout(msg_type);
+
+                if (ReceivedMessageCallback != null)
+                    ReceivedMessageCallback(msg_type, message);
             }
         }
 
@@ -1121,7 +1471,7 @@ namespace Fun
         //
         // Serial-number-related functions
         //
-        bool OnSeqReceived (Transport transport, UInt32 seq)
+        bool onSeqReceived (Transport transport, UInt32 seq)
         {
             if (transport == null)
                 return false;
@@ -1132,35 +1482,35 @@ namespace Fun
             }
             else
             {
-                if (!SeqLess(seq_recvd_, seq))
+                if (!seqLess(seq_recvd_, seq))
                 {
-                    FunDebug.Log("Last sequence number is {0} but {1} received. Skipping message.", seq_recvd_, seq);
+                    Log("Last sequence number is {0} but {1} received. Skipping message.", seq_recvd_, seq);
                     return false;
                 }
                 else if (seq != seq_recvd_ + 1)
                 {
                     string message = string.Format("Received wrong sequence number {0}. {1} expected.", seq, seq_recvd_ + 1);
-                    FunDebug.LogError(message);
+                    LogError(message);
 
-                    StopTransport(transport);
-                    OnTransportError(transport.protocol, TransportError.Type.kInvalidSequence, message);
+                    stopTransport(transport);
+                    onTransportError(transport.protocol, TransportError.Type.kInvalidSequence, message);
                     return false;
                 }
             }
 
             seq_recvd_ = seq;
 
-            SendAck(transport, seq_recvd_ + 1);
+            sendAck(transport, seq_recvd_ + 1);
 
             return true;
         }
 
-        void OnAckReceived (Transport transport, UInt32 ack)
+        void onAckReceived (Transport transport, UInt32 ack)
         {
             if (!Connected || transport == null)
                 return;
 
-            FunDebug.DebugLog("received ack message - ack:{0}", ack);
+            DebugLog("received ack message - ack:{0}", ack);
 
             UInt32 seq = 0;
 
@@ -1169,7 +1519,7 @@ namespace Fun
                 FunapiMessage last_msg = send_queue_.Peek();
                 if (transport.encoding == FunEncoding.kJson)
                 {
-                    seq = (UInt32)FunapiMessage.JsonHelper.GetIntegerField(last_msg.message, kSeqNumberField);
+                    seq = (UInt32)json_helper_.GetIntegerField(last_msg.message, kSeqNumberField);
                 }
                 else if (transport.encoding == FunEncoding.kProtobuf)
                 {
@@ -1177,11 +1527,11 @@ namespace Fun
                 }
                 else
                 {
-                    FunDebug.LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
+                    LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
                     seq = 0;
                 }
 
-                if (SeqLess(seq, ack))
+                if (seqLess(seq, ack))
                 {
                     send_queue_.Dequeue();
                 }
@@ -1199,7 +1549,7 @@ namespace Fun
                     {
                         if (transport.encoding == FunEncoding.kJson)
                         {
-                            seq = (UInt32)FunapiMessage.JsonHelper.GetIntegerField(msg.message, kSeqNumberField);
+                            seq = (UInt32)json_helper_.GetIntegerField(msg.message, kSeqNumberField);
                         }
                         else if (transport.encoding == FunEncoding.kProtobuf)
                         {
@@ -1207,28 +1557,28 @@ namespace Fun
                         }
                         else
                         {
-                            FunDebug.LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
+                            LogWarning("The encoding type is invalid. type: {0}", transport.encoding);
                             seq = 0;
                         }
 
-                        if (seq == ack || SeqLess(ack, seq))
+                        if (seq == ack || seqLess(ack, seq))
                         {
                             transport.SendMessage(msg);
                         }
                         else
                         {
-                            FunDebug.LogWarning("OnAckReceived({0}) - wrong sequence number {1}. ", ack, seq);
+                            LogWarning("onAckReceived({0}) - wrong sequence number {1}. ", ack, seq);
                         }
                     }
 
-                    FunDebug.Log("Resend {0} messages.", send_queue_.Count);
+                    Log("Resend {0} messages.", send_queue_.Count);
                 }
 
-                SetTransportStarted(transport);
+                setTransportStarted(transport);
             }
         }
 
-        UInt32 GetNextSeq (TransportProtocol protocol)
+        UInt32 getNextSeq (TransportProtocol protocol)
         {
             if (protocol == TransportProtocol.kTcp)
             {
@@ -1243,7 +1593,7 @@ namespace Fun
         }
 
         // Serial-number arithmetic
-        static bool SeqLess (UInt32 x, UInt32 y)
+        static bool seqLess (UInt32 x, UInt32 y)
         {
             // 아래 참고
             //  - http://en.wikipedia.org/wiki/Serial_number_arithmetic
@@ -1252,7 +1602,7 @@ namespace Fun
         }
 
         // Convert to protocol string
-        static string ConvertString (TransportProtocol protocol)
+        static string convertString (TransportProtocol protocol)
         {
             if (protocol == TransportProtocol.kTcp)
                 return "TCP";
@@ -1265,20 +1615,6 @@ namespace Fun
         }
 
 
-        // Delegates
-        public delegate void SessionEventHandler (SessionEventType type, string session_id);
-        public delegate void TransportEventHandler (TransportProtocol protocol, TransportEventType type);
-        public delegate void TransportErrorHandler (TransportProtocol protocol, TransportError type);
-        public delegate void ReceivedMessageHandler (string msg_type, object message);
-        public delegate void ResponseTimeoutHandler (string msg_type);
-
-        // Funapi message-related events.
-        public event SessionEventHandler SessionEventCallback;
-        public event TransportEventHandler TransportEventCallback;
-        public event TransportErrorHandler TransportErrorCallback;
-        public event ReceivedMessageHandler ReceivedMessageCallback;
-        public event ResponseTimeoutHandler ResponseTimeoutCallback;
-
         // Message-type-related constants.
         const string kMessageTypeField = "_msgtype";
         const string kSessionIdField = "_sid";
@@ -1286,6 +1622,24 @@ namespace Fun
         const string kAckNumberField = "_ack";
         const string kSessionOpenedType = "_session_opened";
         const string kSessionClosedType = "_session_closed";
+        const string kRedirectType = "_sc_redirect";
+        const string kRedirectConnectType = "_cs_redirect_connect";
+
+        // Delegates
+        public delegate void SessionEventHandler (SessionEventType type, string session_id);
+        public delegate TransportOption TransportOptionHandler (string flavor, TransportProtocol protocol);
+        public delegate void TransportEventHandler (TransportProtocol protocol, TransportEventType type);
+        public delegate void TransportErrorHandler (TransportProtocol protocol, TransportError type);
+        public delegate void ReceivedMessageHandler (string msg_type, object message);
+        public delegate void ResponseTimeoutHandler (string msg_type);
+
+        // Funapi message-related events.
+        public event SessionEventHandler SessionEventCallback;
+        public event TransportOptionHandler TransportOptionCallback;
+        public event TransportEventHandler TransportEventCallback;
+        public event TransportErrorHandler TransportErrorCallback;
+        public event ReceivedMessageHandler ReceivedMessageCallback;
+        public event ResponseTimeoutHandler ResponseTimeoutCallback;
 
         class ExpectedResponse
         {
@@ -1299,25 +1653,45 @@ namespace Fun
             public float wait_time = 0f;
         }
 
+        class RedirectInfo
+        {
+            public TransportProtocol protocol;
+            public FunEncoding encoding;
+            public TransportOption option;
+            public ushort port;
+        }
+
         enum State
         {
             kUnknown = 0,
             kStarted,
             kConnected,
-            kWaitForSession,
+            kWaitForSessionId,
             kStopped
         };
 
+        enum RedirectResult
+        {
+            kSucceeded = 0,
+            kInvalidToken,
+            kExpiredToken,
+            kAuthFailed
+        }
+
 
         State state_;
-        object state_lock_ = new object();
         string server_address_ = "";
+        object state_lock_ = new object();
 
         // Session-related variables.
         string session_id_ = "";
         bool reliable_session_ = false;
         TransportProtocol first_sending_protocol_;
         static System.Random rnd_ = new System.Random();
+
+        // Redirect-related variables.
+        bool wait_redirect_ = false;
+        string redirect_token_ = "";
 
         // Serial-number-related variables.
         UInt32 tcp_seq_ = 0;
@@ -1333,6 +1707,7 @@ namespace Fun
         // Message-related variables.
         object message_lock_ = new object();
         object expected_response_lock = new object();
+        static JsonAccessor json_helper_ = FunapiMessage.JsonHelper;
         Queue<FunapiMessage> send_queue_ = new Queue<FunapiMessage>();
         Queue<FunapiMessage> unsent_queue_ = new Queue<FunapiMessage>();
         List<FunapiMessage> message_buffer_ = new List<FunapiMessage>();

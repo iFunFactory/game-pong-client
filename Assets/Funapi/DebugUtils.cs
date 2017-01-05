@@ -46,83 +46,83 @@ namespace Fun
         [Conditional("ENABLE_LOG")]
         public static void Log (string message, params object[] args)
         {
-            UnityEngine.Debug.Log(GetTimeLog(string.Format(message, args)));
+            UnityEngine.Debug.Log(getTimeLog(string.Format(message, args)));
         }
 
         [Conditional("ENABLE_LOG")]
         public static void LogWarning (string message, params object[] args)
         {
-            UnityEngine.Debug.LogWarning(GetTimeLog(string.Format(message, args)));
+            UnityEngine.Debug.LogWarning(getTimeLog(string.Format(message, args)));
         }
 
         [Conditional("ENABLE_LOG")]
         public static void LogError (string message, params object[] args)
         {
-            UnityEngine.Debug.LogError(GetTimeLog(string.Format(message, args)));
+            UnityEngine.Debug.LogError(getTimeLog(string.Format(message, args)));
         }
 
         [Conditional("ENABLE_DEBUG")]
         public static void DebugLog (string message, params object[] args)
         {
-            UnityEngine.Debug.Log(GetTimeLog(string.Format(message, args)));
+            UnityEngine.Debug.Log(getTimeLog(string.Format(message, args)));
         }
 
         [Conditional("ENABLE_DEBUG")]
         public static void DebugLogWarning (string message, params object[] args)
         {
-            UnityEngine.Debug.LogWarning(GetTimeLog(string.Format(message, args)));
+            UnityEngine.Debug.LogWarning(getTimeLog(string.Format(message, args)));
         }
 
         [Conditional("ENABLE_DEBUG")]
         public static void DebugLogError (string message, params object[] args)
         {
-            UnityEngine.Debug.LogError(GetTimeLog(string.Format(message, args)));
+            UnityEngine.Debug.LogError(getTimeLog(string.Format(message, args)));
         }
 #else
         public static void Log (string message, params object[] args)
         {
 #if ENABLE_LOG
-            Console.WriteLine(GetTimeLog(string.Format(message, args)));
+            Console.WriteLine(getTimeLog(string.Format(message, args)));
 #endif
         }
 
         public static void LogWarning (string message, params object[] args)
         {
 #if ENABLE_LOG
-            Console.WriteLine(GetTimeLog(string.Format(message, args)));
+            Console.WriteLine(getTimeLog(string.Format(message, args)));
 #endif
         }
 
         public static void LogError (string message, params object[] args)
         {
 #if ENABLE_LOG
-            Console.WriteLine(GetTimeLog(string.Format(message, args)));
+            Console.WriteLine(getTimeLog(string.Format(message, args)));
 #endif
         }
 
         public static void DebugLog (string message, params object[] args)
         {
 #if ENABLE_DEBUG
-            Console.WriteLine(GetTimeLog(string.Format(message, args)));
+            Console.WriteLine(getTimeLog(string.Format(message, args)));
 #endif
         }
 
         public static void DebugLogWarning (string message, params object[] args)
         {
 #if ENABLE_DEBUG
-            Console.WriteLine(GetTimeLog(string.Format(message, args)));
+            Console.WriteLine(getTimeLog(string.Format(message, args)));
 #endif
         }
 
         public static void DebugLogError (string message, params object[] args)
         {
 #if ENABLE_DEBUG
-            Console.WriteLine(GetTimeLog(string.Format(message, args)));
+            Console.WriteLine(getTimeLog(string.Format(message, args)));
 #endif
         }
 #endif
 
-        static string GetTimeLog (string message)
+        static string getTimeLog (string message)
         {
             string log = string.Format("[{0}] {1}", DateTime.Now.ToLongTimeString(), message);
 #if ENABLE_SAVE_LOG
@@ -156,6 +156,8 @@ namespace Fun
             stream.Flush();
             stream.Close();
 
+            Log("Logs are saved.\n{0}", path);
+
             ClearLogBuffer();
         }
 
@@ -183,14 +185,77 @@ namespace Fun
         }
 
 
-        static readonly string kLogPath = "/Logs/";
-        static readonly int kLogBufferMax = 1024 * 1024;
+        const string kLogPath = "/Logs/";
+        const int kLogBufferMax = 1024 * 1024;
         static StringBuilder log_buffer_ = new StringBuilder(kLogBufferMax);
 #else
         public static void SaveLogs () {}
         public static int GetLogLength() { return 0; }
         public static string GetLogString() { return ""; }
         public static void RemoveAllLogFiles () {}
+#endif
+    }
+
+
+    public class FunDebugLog
+    {
+        protected void setDebugObject (object obj)
+        {
+#if ENABLE_DEBUG
+            hash_ = string.Format("{0:X}", obj.GetHashCode()).Substring(0, 6);
+#endif
+        }
+
+        protected void Log (string message, params object[] args)
+        {
+#if ENABLE_DEBUG
+            message = string.Format("[{0}] {1}", hash_, message);
+#endif
+            FunDebug.Log(message, args);
+        }
+
+        protected void LogWarning (string message, params object[] args)
+        {
+#if ENABLE_DEBUG
+            message = string.Format("[{0}] {1}", hash_, message);
+#endif
+            FunDebug.LogWarning(message, args);
+        }
+
+        protected void LogError (string message, params object[] args)
+        {
+#if ENABLE_DEBUG
+            message = string.Format("[{0}] {1}", hash_, message);
+#endif
+            FunDebug.LogError(message, args);
+        }
+
+        protected void DebugLog (string message, params object[] args)
+        {
+#if ENABLE_DEBUG
+            message = string.Format("[{0}] {1}", hash_, message);
+#endif
+            FunDebug.DebugLog(message, args);
+        }
+
+        protected void DebugLogWarning (string message, params object[] args)
+        {
+#if ENABLE_DEBUG
+            message = string.Format("[{0}] {1}", hash_, message);
+#endif
+            FunDebug.DebugLogWarning(message, args);
+        }
+
+        protected void DebugLogError (string message, params object[] args)
+        {
+#if ENABLE_DEBUG
+            message = string.Format("[{0}] {1}", hash_, message);
+#endif
+            FunDebug.DebugLogError(message, args);
+        }
+
+#if ENABLE_DEBUG
+        string hash_ = "";
 #endif
     }
 }
