@@ -4,13 +4,11 @@ using UnityEngine;
 
 public class AnnounceBoard : MonoBehaviour
 {
-    private string kServerAddr = "127.0.0.1";
+    private const string kServerAddr = "127.0.0.1";
     private const ushort kServerPort = 8080;
 
     private void Awake()
     {
-        kServerAddr = NetworkManager.Instance.kServerAddr;
-
         GameObject content = GameObject.FindWithTag("Content");
         if (content != null)
         {
