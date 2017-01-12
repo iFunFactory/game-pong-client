@@ -63,10 +63,10 @@ namespace Fun
 
     public class TcpTransportOption : TransportOption
     {
-        public bool AutoReconnect = true;
+        public bool AutoReconnect = false;
         public bool DisableNagle = false;
         public bool EnablePing = false;
-        public bool EnablePingLog = true;
+        public bool EnablePingLog = false;
         public int PingIntervalSeconds = 0;
         public float PingTimeoutSeconds = 0f;
 
