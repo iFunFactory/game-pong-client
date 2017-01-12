@@ -6,18 +6,21 @@ public class NetworkManager : Singleton<NetworkManager>
 {
     // 서버 주소를 수정하세요.
     public string kServerAddr = "127.0.0.1";
-    
+
     // 서버 포트 정보
     private const ushort kServerTcpPort = 8012;
+
     private const ushort kServerUdpPort = 8013;
 
     // Options
     public bool sessionReliability = false;
+
     public bool sequenceValidation = false;
     public int sendingCount = 10;
 
     [Header("TCP Option")]
     public EncryptionType tcpEncryption = EncryptionType.kDefaultEncryption;
+
     public bool autoReconnect = false;
     public bool disableNagle = false;
     public bool usePing = false;
@@ -27,7 +30,9 @@ public class NetworkManager : Singleton<NetworkManager>
 
     [Header("HTTP Option")]
     public EncryptionType httpEncryption = EncryptionType.kDefaultEncryption;
+
     public bool useWWW = false;
+
     private enum STATE
     {
         START,      // session is started (not initialized, not connected, not logined)
@@ -62,7 +67,7 @@ public class NetworkManager : Singleton<NetworkManager>
             session.SessionEventCallback += OnSessionEvent;
             session.TransportEventCallback += OnTransportEvent;
             session.ReceivedMessageCallback += OnReceive;
-            
+
             tryConnect(TransportProtocol.kTcp);
             tryConnect(TransportProtocol.kUdp);
         }
@@ -73,7 +78,7 @@ public class NetworkManager : Singleton<NetworkManager>
         }
     }
 
-    void tryConnect(TransportProtocol protocol)
+    private void tryConnect(TransportProtocol protocol)
     {
         TransportOption option = makeOption(protocol);
         ushort port = getPort(protocol, FunEncoding.kJson);
@@ -81,7 +86,7 @@ public class NetworkManager : Singleton<NetworkManager>
         session.Connect(protocol, FunEncoding.kJson, port, option);
     }
 
-    ushort getPort(TransportProtocol protocol, FunEncoding encoding)
+    private ushort getPort(TransportProtocol protocol, FunEncoding encoding)
     {
         ushort port = 0;
         if (protocol == TransportProtocol.kTcp)
@@ -94,7 +99,7 @@ public class NetworkManager : Singleton<NetworkManager>
         return port;
     }
 
-    TransportOption makeOption(TransportProtocol protocol)
+    private TransportOption makeOption(TransportProtocol protocol)
     {
         TransportOption option = null;
 
@@ -144,8 +149,7 @@ public class NetworkManager : Singleton<NetworkManager>
     public void Send(string messageType, Dictionary<string, object> body = null,
                       TransportProtocol protocol = TransportProtocol.kDefault)
     {
-        if (!GameLogic.Instance.isMultiPlay)
-            return;
+        if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.SINGLE) return;
 
         if (body == null)
             body = new Dictionary<string, object>();
@@ -156,17 +160,23 @@ public class NetworkManager : Singleton<NetworkManager>
     // session 이벤트 처리
     private void OnSessionEvent(SessionEventType type, string session_id)
     {
-        Debug.Log("OnSessionEvent: " + type);
-
         switch (type)
         {
             case SessionEventType.kOpened:
                 state = STATE.INITED;
 
-                // 세션이 생성되면, 바로 로그인 한다.
-                Dictionary<string, object> body = new Dictionary<string, object>();
-                body["id"] = myId;
-                session.SendMessage("login", body);
+                // 게스트 로그인일 경우 세션이 생성되면, 바로 로그인 한다.
+                if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.MULTI_GUEST)
+                {
+                    Dictionary<string, object> body = new Dictionary<string, object>();
+                    body["id"] = myId;
+                    body["type"] = "guest";
+                    session.SendMessage("login", body);
+                }
+                else if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.MULTI_FACEBOOK)
+                {
+                    FacebookManager.Instance.login();
+                }
                 break;
 
             case SessionEventType.kClosed:
@@ -190,7 +200,7 @@ public class NetworkManager : Singleton<NetworkManager>
             case TransportEventType.kConnectionFailed:
             case TransportEventType.kConnectionTimedOut:
                 // 연결에 실패함
-                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), Application.Quit);
+                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
                 break;
         }
     }
@@ -209,7 +219,8 @@ public class NetworkManager : Singleton<NetworkManager>
                 {
                     // 로그인 실패
                     state = STATE.ERROR;
-                    ModalWindow.Instance.Open("로그인 실패", "로그인에 실패했습니다.\n게임을 다시 시작해 주세요.", Application.Quit);
+                    
+                    ModalWindow.Instance.Open("로그인 실패", message["msg"].ToString(), AppUtil.Quit);
                 }
                 break;
 
@@ -232,7 +243,8 @@ public class NetworkManager : Singleton<NetworkManager>
                         var modalContent = "매칭에 실패했습니다.";
 
                         // 매칭 취소
-                        if (message["result"].Equals("Cancel")){
+                        if (message["result"].Equals("Cancel"))
+                        {
                             modalTitle = "매칭 취소";
                             modalContent = "매칭을 취소했습니다.";
                         }
@@ -240,7 +252,7 @@ public class NetworkManager : Singleton<NetworkManager>
                     }
                 }
                 break;
-                
+
             case "start":
                 GameLogic.Instance.StartPlay();
                 break;

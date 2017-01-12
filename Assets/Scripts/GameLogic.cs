@@ -14,37 +14,48 @@ public class GameLogic : Singleton<GameLogic>
     public Ball ball;
     public float ballSpeed = 1.5f;
 
-    public bool isMultiPlay = false;
-    
     // 메뉴 화면
     public void ShowMenu()
     {
         state = GAME_STATE.MENU;
-
         menu.SetActive(true);
-        menu.OnDisableCancelMatchingBtn();
 
-        if (isMultiPlay)
-            menu.EnableMatchingButton();
+        if(loginType == LOGIN_TYPE.SINGLE)
+        {
+            menu.OnSinglePlayMainMenu();
+        }
+        else
+        {
+            menu.OnMultiplayMainMenu();
+        }
 
         gameRoot.SetActive(false);
         setStatusText("");
     }
 
-    public void StartGame()
+    public void SinglePlayLogin()
     {
-        if (isMultiPlay)
-        {
-            state = GAME_STATE.INIT;
-            NetworkManager.Instance.Connect();
-        }
-        else
-        {
-            setReadyToPlay();
-            StartPlay();
-        }
+        loginType = LOGIN_TYPE.SINGLE;
+        ShowMenu();
     }
 
+    public void GuestLogin()
+    {
+        loginType = LOGIN_TYPE.MULTI_GUEST;
+        NetworkManager.Instance.Connect();
+    }
+
+    public void FBLogin()
+    {
+        loginType = LOGIN_TYPE.MULTI_FACEBOOK;
+        NetworkManager.Instance.Connect();
+    }
+
+    public void StartSingleGamePlay()
+    {
+        setReadyToPlay();
+        StartPlay();
+    }
 
     // 게임 시작
     public void StartPlay()
@@ -54,14 +65,14 @@ public class GameLogic : Singleton<GameLogic>
 
         setStatusText("");
 
-        if (!isMultiPlay || bRoomMaster)
+        if (loginType == LOGIN_TYPE.SINGLE || bRoomMaster)
         {
             // 공의 첫 움직임
             float vx = (ballSpeed + UnityEngine.Random.value) * (UnityEngine.Random.value < 0.5f ? -1 : 1);
             float vy = (ballSpeed + UnityEngine.Random.value) * (UnityEngine.Random.value < 0.5f ? -1 : 1);
             ball.SetProperties(0, 0, vx, vy);
 
-            if (isMultiPlay)
+            if (loginType != LOGIN_TYPE.SINGLE)
                 ball.SendProperties();
         }
     }
@@ -75,10 +86,25 @@ public class GameLogic : Singleton<GameLogic>
         NetworkManager.Instance.Send("match");
     }
 
+    // 매칭 결과 처리
+    public void OnMatch(bool bMaster)
+    {
+        bRoomMaster = bMaster;
+        setReadyToPlay();
+
+        // 준비 완료 메세지 송신
+        Invoke("sendReady", 1);
+    }
+
+    // 준비 완료 메세지 송신
+    private void sendReady()
+    {
+        NetworkManager.Instance.Send("ready");
+    }
+
     public void RequestCancelMatching()
     {
         state = GAME_STATE.MENU;
-
         NetworkManager.Instance.Send("cancelmatch");
     }
 
@@ -91,12 +117,11 @@ public class GameLogic : Singleton<GameLogic>
                 {
                     // 세션 생성, 로그인 완료, 메뉴로
                     ShowMenu();
-                    menu.OnConnected();
                 }
                 break;
 
             case GAME_STATE.GAME:
-                if (isMultiPlay)
+                if (loginType != LOGIN_TYPE.SINGLE)
                 {
                     // 승패 처리, 패배시에만 보고함
                     // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
@@ -124,9 +149,9 @@ public class GameLogic : Singleton<GameLogic>
 
     private void OnApplicationPause(bool isPaused)
     {
-        if (!isMultiPlay && isPaused)
+        if (loginType == LOGIN_TYPE.SINGLE && isPaused)
         {
-            Application.Quit();
+            AppUtil.Quit();
             return;
         }
     }
@@ -135,18 +160,7 @@ public class GameLogic : Singleton<GameLogic>
     {
         NetworkManager.Instance.Stop();
     }
-
-    // 매칭 결과 처리
-    public void OnMatch(bool bMaster)
-    {
-        bRoomMaster = bMaster;
-
-        setReadyToPlay();
-
-        // 준비 완료 메세지 송신
-        Invoke("sendReady", 1);
-    }
-
+    
     // 게임 중 정보 업데이트
     public void RelayMessageReceived(Dictionary<string, object> message)
     {
@@ -198,9 +212,12 @@ public class GameLogic : Singleton<GameLogic>
         gameRoot.SetActive(true);
 
         // 위치 초기화
-        myBar.Ready(isMultiPlay);
-        oppBar.Ready(isMultiPlay);
-        ball.Reset(isMultiPlay);
+
+        var isMultiplay_ = isMultiplay();
+
+        myBar.Ready(isMultiplay_);
+        oppBar.Ready(isMultiplay_);
+        ball.Reset(isMultiplay_);
 
         // ready
         setStatusText("준비!");
@@ -211,14 +228,15 @@ public class GameLogic : Singleton<GameLogic>
         textLabel.text = text;
     }
 
-    // 준비 완료 메세지 송신
-    private void sendReady()
+    private bool isMultiplay()
     {
-        NetworkManager.Instance.Send("ready");
+        if (loginType == LOGIN_TYPE.SINGLE)
+        {
+            return false;
+        }
+        return true;
     }
-
-    private const float kOutOfBounds = 60f;
-
+    
     private enum GAME_STATE
     {
         INIT,       // init. game
@@ -227,10 +245,20 @@ public class GameLogic : Singleton<GameLogic>
         READY,      // ready for game
         GAME,       // playing pong
         END,        // end play
-        RESULT,     // result
+        RESULT      // result
     }
 
     private GAME_STATE state;
+
+    public enum LOGIN_TYPE
+    {
+        SINGLE,   
+        MULTI_GUEST, 
+        MULTI_FACEBOOK
+    }
+
+    public LOGIN_TYPE loginType { get; private set; }
     private bool bRoomMaster = false;
+    private const float kOutOfBounds = 60f;
     private float lastBarTimeSeq = 0;
 }
