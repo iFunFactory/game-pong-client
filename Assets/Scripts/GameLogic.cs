@@ -51,6 +51,13 @@ public class GameLogic : Singleton<GameLogic>
         NetworkManager.Instance.Connect();
     }
 
+    public void SetMatchRecord(int winCount, int loseCount)
+    {
+        winCount_ = winCount;
+        loseCount_ = loseCount;
+        menu.SetMatchRecord(winCount, loseCount);
+    }
+
     public void StartSingleGamePlay()
     {
         setReadyToPlay();
@@ -130,6 +137,7 @@ public class GameLogic : Singleton<GameLogic>
                         Dictionary<string, object> message = new Dictionary<string, object>();
                         message["result"] = "lose";
                         NetworkManager.Instance.Send("result", message);
+                        state = GAME_STATE.WAIT;
                     }
                 }
                 else
@@ -191,17 +199,24 @@ public class GameLogic : Singleton<GameLogic>
     // 서버의 게임 결과 응답 처리
     public void ResultMessageReceived(Dictionary<string, object> message)
     {
-        if (state != GAME_STATE.GAME)
+        if (state != GAME_STATE.WAIT && state != GAME_STATE.GAME)
             return;
 
         // 게임 결과 화면
         state = GAME_STATE.RESULT;
+
         gameRoot.SetActive(false);
 
         if (message["result"].Equals("win"))
+        {
+            SetMatchRecord(winCount_ + 1, loseCount_);
             ModalWindow.Instance.Open("결과", "승리했습니다!", ShowMenu);
+        }
         else
+        {
+            SetMatchRecord(winCount_ , loseCount_ + 1);
             ModalWindow.Instance.Open("결과", "패배했습니다!", ShowMenu);
+        }
     }
 
     private void setReadyToPlay()
@@ -245,7 +260,8 @@ public class GameLogic : Singleton<GameLogic>
         READY,      // ready for game
         GAME,       // playing pong
         END,        // end play
-        RESULT      // result
+        RESULT,     // result
+        WAIT        // wait response for only one request transmission
     }
 
     private GAME_STATE state;
@@ -261,4 +277,6 @@ public class GameLogic : Singleton<GameLogic>
     private bool bRoomMaster = false;
     private const float kOutOfBounds = 60f;
     private float lastBarTimeSeq = 0;
+    private int winCount_;
+    private int loseCount_;
 }

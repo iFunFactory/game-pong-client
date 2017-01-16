@@ -1,4 +1,5 @@
 using Fun;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -188,8 +189,6 @@ public class NetworkManager : Singleton<NetworkManager>
     // transport 이벤트 처리
     private void OnTransportEvent(TransportProtocol protocol, TransportEventType type)
     {
-        Debug.Log("OnTransportEvent: " + protocol + " : " + type);
-
         switch (type)
         {
             case TransportEventType.kDisconnected:
@@ -214,12 +213,19 @@ public class NetworkManager : Singleton<NetworkManager>
         {
             case "login":
                 if (message["result"].Equals("ok"))
+                {
                     state = STATE.READY;
+                    int winCount;
+                    int loseCount;
+                    Int32.TryParse(message["winCount"].ToString(), out winCount);
+                    Int32.TryParse(message["loseCount"].ToString(), out loseCount);
+                    GameLogic.Instance.SetMatchRecord(winCount, loseCount);
+                }
                 else
                 {
                     // 로그인 실패
                     state = STATE.ERROR;
-                    
+
                     ModalWindow.Instance.Open("로그인 실패", message["msg"].ToString(), AppUtil.Quit);
                 }
                 break;

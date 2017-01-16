@@ -8,7 +8,7 @@ public class Menu : MonoBehaviour
     private Button btnStart = null;
     private Button btnMatching = null;
     private Button btnCancelMatching = null;
-
+    private Text matchRecord;
     private GameObject login;
     private GameObject main;
 
@@ -20,7 +20,7 @@ public class Menu : MonoBehaviour
         btnStart = main.transform.FindChild("StartGame").GetComponent<Button>();
         btnMatching = main.transform.FindChild("StartMatching").GetComponent<Button>();
         btnCancelMatching = main.transform.FindChild("CancelMatching").GetComponent<Button>();
-
+        matchRecord = main.transform.FindChild("MatchRecord").GetComponent<Text>();
         OnLoginMenu();
     }
 
@@ -104,5 +104,11 @@ public class Menu : MonoBehaviour
     public void SetActive(bool enable)
     {
         gameObject.SetActive(enable);
+    }
+
+    public void SetMatchRecord(int winCount, int loseCount)
+    {
+        var recordText = string.Format("{0}승 {1}패", winCount, loseCount);
+        matchRecord.text = recordText;
     }
 }
