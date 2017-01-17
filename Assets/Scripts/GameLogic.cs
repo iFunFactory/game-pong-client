@@ -20,7 +20,7 @@ public class GameLogic : Singleton<GameLogic>
         state = GAME_STATE.MENU;
         menu.SetActive(true);
 
-        if(loginType == LOGIN_TYPE.SINGLE)
+        if (loginType == LOGIN_TYPE.SINGLE)
         {
             menu.OnSinglePlayMainMenu();
         }
@@ -31,6 +31,11 @@ public class GameLogic : Singleton<GameLogic>
 
         gameRoot.SetActive(false);
         setStatusText("");
+    }
+
+    public void WaitMenu()
+    {
+        menu.WaitMenu();
     }
 
     public void SinglePlayLogin()
@@ -56,6 +61,11 @@ public class GameLogic : Singleton<GameLogic>
         winCount_ = winCount;
         loseCount_ = loseCount;
         menu.SetMatchRecord(winCount, loseCount);
+    }
+
+    public void RequestRankList()
+    {
+        NetworkManager.Instance.Send("ranklist");
     }
 
     public void StartSingleGamePlay()
@@ -168,7 +178,7 @@ public class GameLogic : Singleton<GameLogic>
     {
         NetworkManager.Instance.Stop();
     }
-    
+
     // 게임 중 정보 업데이트
     public void RelayMessageReceived(Dictionary<string, object> message)
     {
@@ -214,9 +224,14 @@ public class GameLogic : Singleton<GameLogic>
         }
         else
         {
-            SetMatchRecord(winCount_ , loseCount_ + 1);
+            SetMatchRecord(winCount_, loseCount_ + 1);
             ModalWindow.Instance.Open("결과", "패배했습니다!", ShowMenu);
         }
+    }
+
+    public void RecordlistMessageReceived(Dictionary<string, object> message)
+    {
+        menu.SetRecordBoard(message);
     }
 
     private void setReadyToPlay()
@@ -251,7 +266,7 @@ public class GameLogic : Singleton<GameLogic>
         }
         return true;
     }
-    
+
     private enum GAME_STATE
     {
         INIT,       // init. game
@@ -268,8 +283,8 @@ public class GameLogic : Singleton<GameLogic>
 
     public enum LOGIN_TYPE
     {
-        SINGLE,   
-        MULTI_GUEST, 
+        SINGLE,
+        MULTI_GUEST,
         MULTI_FACEBOOK
     }
 

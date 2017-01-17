@@ -44,6 +44,7 @@ public class NetworkManager : Singleton<NetworkManager>
     }
 
     private STATE state;
+    private string deviceId = "";
     private string myId = "";
     private FunapiSession session = null;
 
@@ -51,9 +52,9 @@ public class NetworkManager : Singleton<NetworkManager>
     {
         // uid를 구해서 ID로 쓴다
 #if UNITY_EDITOR
-        myId = SystemInfo.deviceUniqueIdentifier + "_Editor";   // 에디터용
+        deviceId = SystemInfo.deviceUniqueIdentifier + "_Editor";   // 에디터용
 #else
-        myId = SystemInfo.deviceUniqueIdentifier + "_" + SystemInfo.deviceType;
+        deviceId = SystemInfo.deviceUniqueIdentifier + "_" + SystemInfo.deviceType;
 #endif
     }
 
@@ -165,12 +166,13 @@ public class NetworkManager : Singleton<NetworkManager>
         {
             case SessionEventType.kOpened:
                 state = STATE.INITED;
+                GameLogic.Instance.WaitMenu();
 
                 // 게스트 로그인일 경우 세션이 생성되면, 바로 로그인 한다.
                 if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.MULTI_GUEST)
                 {
                     Dictionary<string, object> body = new Dictionary<string, object>();
-                    body["id"] = myId;
+                    body["id"] = deviceId;
                     body["type"] = "guest";
                     session.SendMessage("login", body);
                 }
@@ -214,6 +216,7 @@ public class NetworkManager : Singleton<NetworkManager>
             case "login":
                 if (message["result"].Equals("ok"))
                 {
+                    myId = message["id"].ToString();
                     state = STATE.READY;
                     int winCount;
                     int loseCount;
@@ -269,6 +272,10 @@ public class NetworkManager : Singleton<NetworkManager>
 
             case "result":
                 GameLogic.Instance.ResultMessageReceived(message);
+                break;
+
+            case "ranklist":
+                GameLogic.Instance.RecordlistMessageReceived(message);
                 break;
         }
     }

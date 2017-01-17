@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System.Collections.Generic;
+using UnityEngine;
 using UnityEngine.UI;
 
 public class Menu : MonoBehaviour
@@ -11,11 +12,13 @@ public class Menu : MonoBehaviour
     private Text matchRecord;
     private GameObject login;
     private GameObject main;
+    private GameObject recordBoard;
 
     private void Awake()
     {
         login = transform.FindChild("Login").gameObject;
         main = transform.FindChild("Main").gameObject;
+        recordBoard = transform.parent.FindChild("RecordBoard").gameObject;
 
         btnStart = main.transform.FindChild("StartGame").GetComponent<Button>();
         btnMatching = main.transform.FindChild("StartMatching").GetComponent<Button>();
@@ -42,10 +45,19 @@ public class Menu : MonoBehaviour
         GameLogic.Instance.FBLogin();
     }
 
+    public void WaitMenu()
+    {
+        foreach (var button in login.GetComponentsInChildren<Button>())
+        {
+            button.interactable = false;
+        }
+    }
+
     public void OnLoginMenu()
     {
         login.SetActive(true);
         main.SetActive(false);
+        recordBoard.SetActive(false);
     }
 
     public void OnSinglePlayMainMenu()
@@ -76,6 +88,13 @@ public class Menu : MonoBehaviour
     {
         gameObject.SetActive(false);
         announceBoard.Show();
+    }
+
+    public void OnLeaderBoardClicked()
+    {
+        gameObject.SetActive(false);
+        recordBoard.SetActive(true);
+        GameLogic.Instance.RequestRankList();
     }
 
     public void OnStartClicked()
@@ -110,5 +129,23 @@ public class Menu : MonoBehaviour
     {
         var recordText = string.Format("{0}승 {1}패", winCount, loseCount);
         matchRecord.text = recordText;
+    }
+
+    public void SetRecordBoard(Dictionary<string, object> message)
+    {
+        var count = message.Count;
+        Transform usersTransform = recordBoard.transform.FindChild("Users");
+
+        for (int i = 0; i < count; i++)
+        {
+            Dictionary<string, object> subMessage = message[i.ToString()] as Dictionary<string, object>;
+            string gameObjectName = string.Format("User{0}", i + 1);
+            Text textComponent = usersTransform.FindChild(gameObjectName).transform.GetComponentInChildren<Text>();
+
+            textComponent.text = string.Format("{0}위 : {1}연승\nid: {2} ",
+                subMessage["rank"],
+                subMessage["score"],
+                subMessage["id"]);
+        }
     }
 }
