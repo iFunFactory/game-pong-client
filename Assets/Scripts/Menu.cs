@@ -125,9 +125,9 @@ public class Menu : MonoBehaviour
         gameObject.SetActive(enable);
     }
 
-    public void SetMatchRecord(int winCount, int loseCount)
+    public void SetMatchRecord(int winCount, int loseCount, int curRecord)
     {
-        var recordText = string.Format("{0}승 {1}패", winCount, loseCount);
+        var recordText = string.Format("총 전적 : {0}승 {1}패 | 현재 {2} 연승", winCount, loseCount, curRecord);
         matchRecord.text = recordText;
     }
 

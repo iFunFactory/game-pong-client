@@ -56,11 +56,12 @@ public class GameLogic : Singleton<GameLogic>
         NetworkManager.Instance.Connect();
     }
 
-    public void SetMatchRecord(int winCount, int loseCount)
+    public void SetMatchRecord(int winCount, int loseCount, int curRecord)
     {
         winCount_ = winCount;
         loseCount_ = loseCount;
-        menu.SetMatchRecord(winCount, loseCount);
+        curRecord_ = curRecord;
+        menu.SetMatchRecord(winCount, loseCount, curRecord);
     }
 
     public void RequestRankList()
@@ -219,12 +220,12 @@ public class GameLogic : Singleton<GameLogic>
 
         if (message["result"].Equals("win"))
         {
-            SetMatchRecord(winCount_ + 1, loseCount_);
+            SetMatchRecord(winCount_ + 1, loseCount_, curRecord_ + 1);
             ModalWindow.Instance.Open("결과", "승리했습니다!", ShowMenu);
         }
         else
         {
-            SetMatchRecord(winCount_, loseCount_ + 1);
+            SetMatchRecord(winCount_, loseCount_ + 1, 0);
             ModalWindow.Instance.Open("결과", "패배했습니다!", ShowMenu);
         }
     }
@@ -294,4 +295,5 @@ public class GameLogic : Singleton<GameLogic>
     private float lastBarTimeSeq = 0;
     private int winCount_;
     private int loseCount_;
+    private int curRecord_;
 }

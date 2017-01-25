@@ -220,9 +220,11 @@ public class NetworkManager : Singleton<NetworkManager>
                     state = STATE.READY;
                     int winCount;
                     int loseCount;
+                    int curRecord;
                     Int32.TryParse(message["winCount"].ToString(), out winCount);
                     Int32.TryParse(message["loseCount"].ToString(), out loseCount);
-                    GameLogic.Instance.SetMatchRecord(winCount, loseCount);
+                    Int32.TryParse(message["curRecord"].ToString(), out curRecord);
+                    GameLogic.Instance.SetMatchRecord(winCount, loseCount, curRecord);
                 }
                 else
                 {
