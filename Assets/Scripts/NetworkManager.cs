@@ -10,8 +10,8 @@ public class NetworkManager : Singleton<NetworkManager>
 
     // 서버 포트 정보
     private const ushort kServerTcpPort = 8012;
-
     private const ushort kServerUdpPort = 8013;
+    private const ushort kServerHttpPort = 8018;
 
     // Options
     public bool sessionReliability = false;
@@ -92,11 +92,11 @@ public class NetworkManager : Singleton<NetworkManager>
     {
         ushort port = 0;
         if (protocol == TransportProtocol.kTcp)
-            port = (ushort)(encoding == FunEncoding.kJson ? 8012 : 8022);
+            port = kServerTcpPort;
         else if (protocol == TransportProtocol.kUdp)
-            port = (ushort)(encoding == FunEncoding.kJson ? 8013 : 8023);
+            port = kServerUdpPort;
         else if (protocol == TransportProtocol.kHttp)
-            port = (ushort)(encoding == FunEncoding.kJson ? 8018 : 8028);
+            port = kServerHttpPort;
 
         return port;
     }
@@ -278,6 +278,10 @@ public class NetworkManager : Singleton<NetworkManager>
 
             case "ranklist":
                 GameLogic.Instance.RecordlistMessageReceived(message);
+                break;
+
+            case "error":
+                ModalWindow.Instance.Open("Error!", message["msg"].ToString(), GameLogic.Instance.ShowMenu);
                 break;
         }
     }
