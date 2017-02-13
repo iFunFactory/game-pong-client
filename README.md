@@ -5,13 +5,10 @@ Pong Game Client
 
 ## 목차
 * [다운로드](#다운로드)
-* [게임 오브젝트들](#게임-오브젝트들)
-* [게임플레이](#게임플레이)
+* [게임 오브젝트](#게임-오브젝트)
+* [테스트](#테스트)
   - [싱글플레이](#싱글플레이)
   - [멀티플레이](#멀티플레이)
-* [서버 설정](#서버-설정)
-* [공지사항](#공지사항)
-* [테스트](#테스트)
 * [Funapi Unity Plugin](#funapi-unity-plugin)
 
 
@@ -19,8 +16,9 @@ Pong Game Client
 * 고전 게임 Pong 구현
 * 싱글 플레이
 * 멀티 플레이
-    * Daily 랭킹 조회 (Leaderboard)
-    * 1 : 1 대전 (Matchmaking)
+    - 로그인
+    - Daily 랭킹 조회 (Leaderboard)
+    - 1 : 1 대전 (Matchmaking)
 * 공지사항 팝업
 
 
@@ -34,10 +32,8 @@ git clone https://github.com/iFunFactory/game-pong.git
 
 다운로드가 완료되면 유니티를 실행시키고 해당 프로젝트를 불러와 봅시다. 이후 `Assets` 폴더의 루트에 있는 **Main** Scene을 로드하면 됩니다.
 
-* **Pong** 서버 설치는 [여기](https://github.com/iFunFactory/game-pong-server)를 참고해 주세요.
 
-
-## 게임 오브젝트들
+## 게임 오브젝트
 
 ### GameLogic
 
@@ -75,7 +71,7 @@ HTTP Transport 옵션입니다. 자세한 내용은 HttpTransport 옵션 [메뉴
 * `Use WWW` : UnityEngine.WWW 클래스 사용 여부를 결정하는 옵션입니다.
 
 
-## 게임플레이
+## 테스트
 
 **Main** Scene을 로드하여 Unity Editor로 실행하거나 기기에 넣어서 실행하면 됩니다.
 
@@ -87,7 +83,22 @@ HTTP Transport 옵션입니다. 자세한 내용은 HttpTransport 옵션 [메뉴
 
 ### 멀티 플레이
 
-멀티플레이를 위해서, 먼저 로그인 메뉴에서 **[게스트 로그인]**혹은 **[페이스북 로그인]**을 통해 로그인이 되어야 합니다. 로그인이 성공적으로 이루어진 후 **[대전시작]** 버튼을 누르면 매칭된 상대와 대전하게 됩니다.
+싱글플레이는 별도의 서버 없이도 테스트가 가능하지만, 멀티플레이를 통한 대전은 pong game server가 필요합니다. pong game server 설치 및 설정에 대한 내용은 [여기](https://github.com/iFunFactory/game-pong-server)를 참고해주세요.
+
+pong server 설정이 완료되었다면, 이제 pong-client에서 접속할 서버 주소 및 Port 번호를 설정해주어야 합니다. 해당 값은 *Scripts/NetworkManager.cs* 파일 상단의 **kServerAddr**, **kServerTcpPort**, **kServerUdpPort** 을 수정하면 됩니다.
+
+```csharp
+// 서버 주소
+public string kServerAddr = "127.0.0.1";
+
+// 서버 포트
+const ushort kServerTcpPort = 8012;
+const ushort kServerUdpPort = 8013;
+const ushort kServerHttpPort = 8018;
+```
+
+
+테스트는 로그인 메뉴에서 **[게스트 로그인]**혹은 **[페이스북 로그인]**을 통해 로그인이 성공적으로 이루어진 후 **[대전시작]** 버튼을 누르면 매칭된 상대와 대전하게 됩니다.
 
 (로그인되면 **[게임시작]** 버튼이 비활성화되어 싱글 플레이는 불가능합니다.)
 
@@ -111,23 +122,6 @@ const UInt16 kServerPort = 8080;
 #### [순위]
 
 **[순위]**버튼을 선택하여 랭킹을 조회할 수 있습니다. 랭킹은 **일간 최다 연승 수**를 기준으로 매겨지며, 매일 `05:00:00`에 초기화되도록 설정되어 있습니다. 해당 기능은 리더보드 에이전트가 활성화 되어야 테스트 가능하며, 자세한 내용은 pong server의 [리더보드 에이전트](https://github.com/iFunFactory/game-pong-server)를 참고해 주세요.
-
-## 서버 설정
-
-서버 주소의 기본값 및 Port 번호는 *Scripts/NetworkManager.cs* 파일 상단의 **kServerAddr**, **kServerTcpPort**, **kServerUdpPort** 값을 수정하면 됩니다.
-
-```csharp
-// 서버 주소
-public string kServerAddr = "127.0.0.1";
-
-// 서버 포트
-const ushort kServerTcpPort = 8012;
-const ushort kServerUdpPort = 8013;
-```
-
-## 테스트
-
-싱글플레이는 별도의 서버 없이도 테스트가 가능하지만, 멀티플레이를 통한 대전은 pong game server가 필요합니다. 관련 내용은 [여기](https://github.com/iFunFactory/game-pong-server)를 참고해주세요.
 
 ## Funapi Unity Plugin
 
