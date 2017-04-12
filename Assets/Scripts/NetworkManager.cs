@@ -69,15 +69,8 @@ public class NetworkManager : Singleton<NetworkManager>
             session.SessionEventCallback += OnSessionEvent;
             session.TransportEventCallback += OnTransportEvent;
             session.ReceivedMessageCallback += OnReceive;
-
-            tryConnect(TransportProtocol.kTcp);
-            tryConnect(TransportProtocol.kUdp);
         }
-        else
-        {
-            session.Connect(TransportProtocol.kTcp);
-            session.Connect(TransportProtocol.kUdp);
-        }
+        tryConnect(TransportProtocol.kTcp);
     }
 
     private void tryConnect(TransportProtocol protocol)
