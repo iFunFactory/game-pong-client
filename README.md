@@ -10,6 +10,7 @@ Pong Game Client
   - [싱글플레이](#싱글플레이)
   - [멀티플레이](#멀티플레이)
 * [Funapi Unity Plugin](#funapi-unity-plugin)
+* [Protobuf 버전](#Protobuf-버전)
 
 
 ## 요약
@@ -126,3 +127,24 @@ const UInt16 kServerPort = 8080;
 ## Funapi Unity Plugin
 
 클라이언트 플러그인에 대한 자세한 정보는 [여기](https://github.com/iFunFactory/engine-plugin-unity3d)를 참고해 주세요.
+
+## Protobuf 버전
+
+### 클라이언트와 로비서버의 통신을 JSON 에서 Protobuf 로 바꿀 때
+
+* 클라이언트 설정: Editor 세팅에서 Encoding type 을 JSON 에서 Protobuf 로 변경합니다. (NetworkManager.cs 안의 값은 Unity Editor 의 값으로 오버라이드 되기 때문에 반드시 Editor 를 통해서 업데이트 해주세요)
+
+* 서버 설정: **MANIFEST.lobby.json** 에서 **tcp_json_port** 부분의 값을 0으로 바꾸고 대신 **tcp_protobuf_port** 의 값을 0이 아닌 값으로 세팅합니다. 만일 TCP 가 아니라 UDP 를 사용하는 경우 각각 **udp_json_port**, **udp_protobuf_port** 를 수정해야됩니다.
+
+### 클라이언트와 게임 서버의 통신을 JSON 에서 Protobuf 로 바꿀 때
+
+* 클라이언트 설정: 클라이언트는 로비서버에 의해 redirect 메시지를 받아서 게임 서버에 접속하게 됩니다. 이 때 로비 서버는 게임 서버의 통신 프로토콜과 인코딩 타입을 클라이언트에 전송하고 아이펀 엔진의 클라이언트 플러그인이 이를 자동으로 처리합니다. 따라서 게임 서버의 통신을 JSON 에서 Protobuf 로 바꾸기 위해서는 별도의 클라이언트 설정 변경은 필요하지 않습니다.
+
+* 서버 설정: **MANIFEST.game.json** 에서 **tcp_json_port** 부분의 값을 0으로 바꾸고 대신 **tcp_protobuf_port** 의 값을 0이 아닌 값으로 세팅합니다. 만일 TCP 가 아니라 UDP 를 사용하는 경우 각각 **udp_json_port**, **udp_protobuf_port** 를 수정해야됩니다.
+
+
+### Protobuf 파일을 수정한 경우
+
+아이펀 엔진은 .proto 파일을 클라이언트/서버가 각각 관리하고 컴파일 해야되는 번거로움을 없애기 위해서, 서버측의 .proto 파일로 Unity 용 dll 을 생성해줍니다.
+proto message 를 수정하기 위해서는 서버측 **src/pong_messages.proto** 파일을 수정합니다.
+그리고 빌드를 한 후, 서버측 빌드 디렉토리 아래 **unity_dll** 이라는 서브디렉토리가 있는데, 거기에 있는 dll 파일들을 Unity client 의 **Assets/Protobuf** 라는 서브디렉토리에 덮어씁니다.
