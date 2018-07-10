@@ -109,6 +109,11 @@ public class NetworkManager : Singleton<NetworkManager>
             session.Stop();
     }
 
+    public FunEncoding GetEncoding(TransportProtocol protocol = TransportProtocol.kDefault)
+    {
+      return session.GetEncoding(protocol);
+    }
+
     public void Send(string messageType, Dictionary<string, object> body = null,
                       TransportProtocol protocol = TransportProtocol.kDefault)
     {
