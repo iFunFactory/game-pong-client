@@ -3,6 +3,9 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+using funapi.network.fun_message;
+
+
 public class NetworkManager : Singleton<NetworkManager>
 {
     // 로비 서버 주소를 수정하세요.
@@ -114,13 +117,38 @@ public class NetworkManager : Singleton<NetworkManager>
       return session.GetEncoding(protocol);
     }
 
-    public void Send(string messageType, Dictionary<string, object> body = null,
+    public void Send(string messageType, TransportProtocol protocol = TransportProtocol.kDefault)
+    {
+        FunEncoding encoding = session.GetEncoding(protocol);
+        if (encoding == FunEncoding.kJson)
+        {
+            Dictionary<string, object> body = new Dictionary<string, object>();
+            Send(messageType, body, protocol);
+        }
+        else if (encoding == FunEncoding.kProtobuf)
+        {
+            FunMessage body = new FunMessage();
+            Send(messageType, body, protocol);
+        }
+        else
+        {
+            FunDebug.Assert(false);
+        }
+    }
+
+    // Json 버전 Send
+    public void Send(string messageType, Dictionary<string, object> body,
                       TransportProtocol protocol = TransportProtocol.kDefault)
     {
         if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.SINGLE) return;
 
-        if (body == null)
-            body = new Dictionary<string, object>();
+        session.SendMessage(messageType, body, protocol);
+    }
+
+    public void Send(string messageType, FunMessage body,
+                     TransportProtocol protocol = TransportProtocol.kDefault)
+    {
+        if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.SINGLE) return;
 
         session.SendMessage(messageType, body, protocol);
     }
