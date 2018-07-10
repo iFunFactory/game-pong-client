@@ -145,10 +145,17 @@ public class GameLogic : Singleton<GameLogic>
                     // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
                     if (ball.transform.localPosition.y < myBar.transform.localPosition.y - kOutOfBounds)
                     {
-                        Dictionary<string, object> message = new Dictionary<string, object>();
-                        message["result"] = "lose";
-                        NetworkManager.Instance.Send("result", message);
-                        state = GAME_STATE.WAIT;
+                        if (NetworkManager.Instance.GetEncoding() == Fun.FunEncoding.kJson)
+                        {
+                            Dictionary<string, object> message = new Dictionary<string, object>();
+                            message["result"] = "lose";
+                            NetworkManager.Instance.Send("result", message);
+                            state = GAME_STATE.WAIT;
+                        }
+                        else
+                        {
+                            // TODO(dkmoon): Protobuf
+                        }
                     }
                 }
                 else

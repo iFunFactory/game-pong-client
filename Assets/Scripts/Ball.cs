@@ -29,12 +29,19 @@ public class Ball : MonoBehaviour
 
     public void SendProperties ()
     {
-        Dictionary<string, object> message = new Dictionary<string, object>();
-        message["ballX"] = transform.localPosition.x;
-        message["ballY"] = transform.localPosition.y;
-        message["ballVX"] = rigidBody.velocity.x;
-        message["ballVY"] = rigidBody.velocity.y;
-        NetworkManager.Instance.Send("relay", message);
+        if (NetworkManager.Instance.GetEncoding() == Fun.FunEncoding.kJson)
+        {
+            Dictionary<string, object> message = new Dictionary<string, object>();
+            message["ballX"] = transform.localPosition.x;
+            message["ballY"] = transform.localPosition.y;
+            message["ballVX"] = rigidBody.velocity.x;
+            message["ballVY"] = rigidBody.velocity.y;
+            NetworkManager.Instance.Send("relay", message);
+        }
+        else
+        {
+            // TODO(dkmoon): Protobuf
+        }
     }
 
     // collision detection, 충돌이 일어났을 때의 위치와 방향을 동기화

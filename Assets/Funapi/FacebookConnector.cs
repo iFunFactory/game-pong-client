@@ -204,11 +204,18 @@ namespace Fun
 
         private void RequestFBLogin(AccessToken token)
         {
-            Dictionary<string, object> body = new Dictionary<string, object>();
-            body["id"] = token.UserId;
-            body["access_token"] = token.TokenString;
-            body["type"] = "fb";
-            NetworkManager.Instance.Send("login", body);
+            if (NetworkManager.Instance.GetEncoding() == FunEncoding.kJson)
+            {
+                Dictionary<string, object> body = new Dictionary<string, object>();
+                body["id"] = token.UserId;
+                body["access_token"] = token.TokenString;
+                body["type"] = "fb";
+                NetworkManager.Instance.Send("login", body);
+            }
+            else
+            {
+                // TODO(dkmoon): Protobuf
+            }
         }
 
         private void OnMyProfileCb(IGraphResult result)

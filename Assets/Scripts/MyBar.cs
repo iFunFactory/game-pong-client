@@ -20,11 +20,18 @@ public class MyBar : DragBar
         {
             lastBarX = transform.localPosition.x;
 
-            Dictionary<string, object> message = new Dictionary<string, object>();
-            // udp를 활용하므로, time sequencer를 추가
-            message["timeSeq"] = Time.realtimeSinceStartup;
-            message["barX"] = transform.localPosition.x;
-            NetworkManager.Instance.Send("relay", message);
+            if (NetworkManager.Instance.GetEncoding() == Fun.FunEncoding.kJson)
+            {
+                Dictionary<string, object> message = new Dictionary<string, object>();
+                // udp를 활용하므로, time sequencer를 추가
+                message["timeSeq"] = Time.realtimeSinceStartup;
+                message["barX"] = transform.localPosition.x;
+                NetworkManager.Instance.Send("relay", message);
+            }
+            else
+            {
+                // TODO(dkmoon): Protobuf
+            }
         }
     }
 

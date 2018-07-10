@@ -165,10 +165,15 @@ public class NetworkManager : Singleton<NetworkManager>
                 // 게스트 로그인일 경우 세션이 생성되면, 바로 로그인 한다.
                 if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.MULTI_GUEST)
                 {
-                    Dictionary<string, object> body = new Dictionary<string, object>();
-                    body["id"] = deviceId;
-                    body["type"] = "guest";
-                    session.SendMessage("login", body);
+                    if (session.GetEncoding() == FunEncoding.kJson)
+                    {
+                        Dictionary<string, object> body = new Dictionary<string, object>();
+                        body["id"] = deviceId;
+                        body["type"] = "guest";
+                        session.SendMessage("login", body);
+                    } else {
+                        // TODO(dkmoon)
+                    }
                 }
                 else if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.MULTI_FACEBOOK)
                 {
