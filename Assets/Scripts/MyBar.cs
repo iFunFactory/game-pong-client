@@ -24,7 +24,7 @@ public class MyBar : DragBar
             // udp를 활용하므로, time sequencer를 추가
             message["timeSeq"] = Time.realtimeSinceStartup;
             message["barX"] = transform.localPosition.x;
-            NetworkManager.Instance.Send("relay", message, Fun.TransportProtocol.kUdp);
+            NetworkManager.Instance.Send("relay", message);
         }
     }
 
