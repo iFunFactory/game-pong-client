@@ -16,14 +16,14 @@ public class Menu : MonoBehaviour
 
     private void Awake()
     {
-        login = transform.FindChild("Login").gameObject;
-        main = transform.FindChild("Main").gameObject;
-        recordBoard = transform.parent.FindChild("RecordBoard").gameObject;
+        login = transform.Find("Login").gameObject;
+        main = transform.Find("Main").gameObject;
+        recordBoard = transform.parent.Find("RecordBoard").gameObject;
 
-        btnStart = main.transform.FindChild("StartGame").GetComponent<Button>();
-        btnMatching = main.transform.FindChild("StartMatching").GetComponent<Button>();
-        btnCancelMatching = main.transform.FindChild("CancelMatching").GetComponent<Button>();
-        matchRecord = main.transform.FindChild("MatchRecord").GetComponent<Text>();
+        btnStart = main.transform.Find("StartGame").GetComponent<Button>();
+        btnMatching = main.transform.Find("StartMatching").GetComponent<Button>();
+        btnCancelMatching = main.transform.Find("CancelMatching").GetComponent<Button>();
+        matchRecord = main.transform.Find("MatchRecord").GetComponent<Text>();
         OnLoginMenu();
     }
 
@@ -134,13 +134,13 @@ public class Menu : MonoBehaviour
     public void SetRecordBoard(Dictionary<string, object> message)
     {
         var count = message.Count;
-        Transform usersTransform = recordBoard.transform.FindChild("Users");
+        Transform usersTransform = recordBoard.transform.Find("Users");
 
         for (int i = 0; i < count; i++)
         {
             Dictionary<string, object> subMessage = message[i.ToString()] as Dictionary<string, object>;
             string gameObjectName = string.Format("User{0}", i + 1);
-            Text textComponent = usersTransform.FindChild(gameObjectName).transform.GetComponentInChildren<Text>();
+            Text textComponent = usersTransform.Find(gameObjectName).transform.GetComponentInChildren<Text>();
 
             textComponent.text = string.Format("{0}위 : {1}연승\nid: {2} ",
                 subMessage["rank"],

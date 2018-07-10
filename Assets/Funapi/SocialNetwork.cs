@@ -99,7 +99,7 @@ namespace Fun
             yield return www;
 
             if (www.texture != null) {
-                FunDebug.DebugLog("Gotten {0}'s profile picture.", info.name);
+                FunDebug.DebugLog1("Gotten {0}'s profile picture.", info.name);
                 info.picture = www.texture;
                 OnPictureNotify(info);
             }
@@ -116,7 +116,7 @@ namespace Fun
                 yield return www;
 
                 if (www.texture != null) {
-                    FunDebug.DebugLog("Gotten {0}'s profile picture.", user.name);
+                    FunDebug.DebugLog1("Gotten {0}'s profile picture.", user.name);
                     user.picture = www.texture;
                     OnPictureNotify(user);
                 }

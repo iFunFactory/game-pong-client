@@ -9,10 +9,10 @@ public class AnnounceBoardItem : MonoBehaviour
     {
         item_rect_ = transform.GetComponent<RectTransform>();
 
-        summary_ = transform.FindChild("Summary").gameObject;
+        summary_ = transform.Find("Summary").gameObject;
         summary_rect_ = summary_.GetComponent<RectTransform>();
 
-        details_ = transform.FindChild("Details").gameObject;
+        details_ = transform.Find("Details").gameObject;
         details_text_ = details_.GetComponent<Text>();
         details_rect_ = details_.GetComponent<RectTransform>();
 

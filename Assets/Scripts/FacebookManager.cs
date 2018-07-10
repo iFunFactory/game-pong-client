@@ -13,7 +13,7 @@ public class FacebookManager : Singleton<FacebookManager>
     private void Awake()
     {
         facebook_ = GameObject.Find("SocialNetwork").GetComponent<FacebookConnector>();
-        
+
         facebook_.OnEventCallback += new SocialNetwork.EventHandler(OnEventHandler);
         facebook_.OnPictureDownloaded += delegate (SocialNetwork.UserInfo user)
         {
@@ -59,7 +59,7 @@ public class FacebookManager : Singleton<FacebookManager>
                 break;
         }
     }
-    
+
     private FacebookConnector facebook_ = null;
 
     private bool logged_in_ = false;

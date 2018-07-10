@@ -85,7 +85,10 @@ public class NetworkManager : Singleton<NetworkManager>
                 ModalWindow.Instance.Open("Network Error", "Server address was not given.", AppUtil.Quit);
             }
 
-            session = FunapiSession.Create(kLobbyServerAddr, sessionReliability);
+            SessionOption option = new SessionOption();
+            option.sessionReliability = sessionReliability;
+
+            session = FunapiSession.Create(kLobbyServerAddr, option);
             session.SessionEventCallback += OnSessionEvent;
             session.TransportEventCallback += OnTransportEvent;
 	    session.TransportOptionCallback += OnTransportOption;
@@ -149,18 +152,28 @@ public class NetworkManager : Singleton<NetworkManager>
     // transport 이벤트 처리
     private void OnTransportEvent(TransportProtocol protocol, TransportEventType type)
     {
-        switch (type)
+        if (type == TransportEventType.kStopped)
         {
-            case TransportEventType.kDisconnected:
+            TransportError.Type error = session.GetLastError(protocol);
+
+            switch (error)
+            {
+            case TransportError.Type.kDisconnected:
                 // 연결이 끊기면 재연결
                 session.Connect(protocol);
                 break;
 
-            case TransportEventType.kConnectionFailed:
-            case TransportEventType.kConnectionTimedOut:
+            case TransportError.Type.kStartingFailed:
+            case TransportError.Type.kConnectionTimeout:
                 // 연결에 실패함
                 ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
                 break;
+
+            default:
+                if (error != TransportError.Type.kNone)
+                    ModalWindow.Instance.Open("연결 끊김", "서버와의 연결이 끊겼습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
+                break;
+            }
         }
     }
 

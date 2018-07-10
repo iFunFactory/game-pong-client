@@ -1,4 +1,4 @@
-﻿// Copyright 2013-2016 iFunFactory Inc. All Rights Reserved.
+﻿// Copyright 2013 iFunFactory Inc. All Rights Reserved.
 //
 // This work is confidential and proprietary to iFunFactory Inc. and
 // must not be used, disclosed, copied, or distributed without the prior
@@ -6,18 +6,13 @@
 
 using MiniJSON;
 using System;
-using System.ComponentModel;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
-#if !NO_UNITY
-using UnityEngine;
-#endif
 
 
 namespace Fun
@@ -39,7 +34,7 @@ namespace Fun
     }
 
 
-    public class FunapiHttpDownloader : FunapiUpdater
+    public class FunapiHttpDownloader : FunapiMono.Listener
     {
         public FunapiHttpDownloader ()
         {
@@ -51,31 +46,35 @@ namespace Fun
             web_client_.DownloadFileCompleted += downloadFileCompleteCb;
         }
 
+        public override void OnQuit ()
+        {
+            Stop();
+        }
+
         // Start downloading
-        public void GetDownloadList (string hostname_or_ip, UInt16 port, bool https, string target_path)
+        public void GetDownloadList (string hostname_or_ip, UInt16 port, bool https,
+                                     string target_path, string file_path = "")
         {
             string url = string.Format("{0}://{1}:{2}",
                                        (https ? "https" : "http"), hostname_or_ip, port);
 
-            GetDownloadList(url, target_path);
+            GetDownloadList(url, target_path, file_path);
         }
 
-        public void GetDownloadList (string url, string target_path)
+        public void GetDownloadList (string url, string target_path, string file_path = "")
         {
-            mutex_.WaitOne();
-
-            try
+            lock (lock_)
             {
                 if (ReadyCallback == null)
                 {
-                    FunDebug.LogError("You must register the ReadyCallback first.");
+                    FunDebug.LogError("Downloader.GetDownloadList - You must register the ReadyCallback first.");
                     return;
                 }
 
                 if (IsDownloading)
                 {
-                    FunDebug.LogWarning("The resource file is being downloaded. (Url: {0})\n"
-                                        + "Please try again after the download is completed.", url);
+                    FunDebug.LogWarning("The resource file is being downloaded. (Url: {0})\n" +
+                                        "Please try again after the download is completed.", url);
                     return;
                 }
 
@@ -85,47 +84,59 @@ namespace Fun
                 if (host_url[host_url.Length - 1] != '/')
                     host_url += "/";
                 host_url_ = host_url;
-                FunDebug.Log("Download url: {0}", host_url_);
+                FunDebug.Log("Downloader - url: {0}", host_url_);
 
                 target_path_ = target_path;
                 if (target_path_[target_path_.Length - 1] != '/')
                     target_path_ += "/";
                 target_path_ += kRootPath + "/";
-                FunDebug.Log("Download path: {0}", target_path_);
+                FunDebug.Log("Downloader - path: {0}", target_path_);
 
                 cur_download_count_ = 0;
                 cur_download_size_ = 0;
                 total_download_count_ = 0;
                 total_download_size_ = 0;
+                partial_download_size_ = 0;
 
-                createUpdater();
+                if (host_url.ToLower().StartsWith("https"))
+                    TrustManager.LoadMozRoots();
+
+                setMonoListener();
                 loadCachedList();
 
                 // Gets list file
-                downloadListFile(host_url_);
-            }
-            finally
-            {
-                mutex_.ReleaseMutex();
+                string request_url = host_url_;
+                if (!string.IsNullOrEmpty(file_path))
+                {
+                    if (file_path[0] == '/')
+                        file_path = file_path.Substring(1);
+
+                    request_url += file_path;
+                }
+
+                downloadListFile(request_url);
             }
         }
 
-        public void StartDownload()
+        public void StartDownload ()
         {
-            mutex_.WaitOne();
-
-            try
+            lock (lock_)
             {
                 if (state_ != State.Ready)
                 {
-                    FunDebug.LogError("You must call GetDownloadList function first "
-                                      + "or wait until ready to download.");
+                    FunDebug.LogWarning("Downloader.StartDownload - You must call GetDownloadList() first " +
+                                        "or wait until ready to download.");
                     return;
                 }
 
-                if (total_download_count_ > 0)
+                if (partial_downloading_)
                 {
-                    FunDebug.Log("Ready to download {0} files ({1})",
+                    FunDebug.Log("Downloader - Ready to download {0} file(s) ({1})",
+                                 partial_download_list_.Count, getSizeString(partial_download_size_));
+                }
+                else if (total_download_count_ > 0)
+                {
+                    FunDebug.Log("Downloader - Ready to download {0} file(s) ({1})",
                                  total_download_count_, getSizeString(total_download_size_));
                 }
 
@@ -133,45 +144,59 @@ namespace Fun
                 retry_download_count_ = 0;
                 download_time_.Start();
 
-                // Deletes files
-                deleteLocalFiles();
-
                 // Starts download
                 downloadResourceFile();
             }
-            finally
-            {
-                mutex_.ReleaseMutex();
-            }
         }
 
-        public void ContinueDownload()
+        public void StartDownload (string prefix_path)
         {
-            mutex_.WaitOne();
-
-            try
+            lock (lock_)
             {
-                if (state_ == State.Paused && download_list_.Count > 0)
+                partial_download_list_ = download_list_.FindAll(
+                    item => { return item.path.StartsWith(prefix_path); });
+
+                if (partial_download_list_.Count <= 0)
+                {
+                    FunDebug.Log("Downloader.StartDownload - '{0}' is up to date.", prefix_path);
+                    return;
+                }
+
+                List<string> list = new List<string>();
+
+                partial_download_size_ = 0;
+                partial_download_list_.ForEach(
+                    item => { partial_download_size_ += item.size; list.Add(item.path); });
+
+                download_list_.RemoveAll(item => { return list.Contains(item.path); });
+
+                partial_downloading_ = true;
+            }
+
+            // Starts download
+            StartDownload();
+        }
+
+        public void ContinueDownload ()
+        {
+            lock (lock_)
+            {
+                if (state_ == State.Paused &&
+                    (download_list_.Count > 0 || partial_download_list_.Count > 0))
                 {
                     state_ = State.Downloading;
                     retry_download_count_ = 0;
                     download_time_.Start();
 
-                    createUpdater();
+                    setMonoListener();
                     downloadResourceFile();
                 }
             }
-            finally
-            {
-                mutex_.ReleaseMutex();
-            }
         }
 
-        public void Stop()
+        public void Stop ()
         {
-            mutex_.WaitOne();
-
-            try
+            lock (lock_)
             {
                 if (state_ == State.None || state_ == State.Completed)
                     return;
@@ -181,23 +206,21 @@ namespace Fun
                     state_ = State.Paused;
                     web_client_.CancelAsync();
                     download_time_.Stop();
-                    FunDebug.Log("Downloading paused.");
+                    FunDebug.Log("Downloader - paused.");
 
                     onFinished(DownloadResult.PAUSED);
                 }
                 else
                 {
                     state_ = State.None;
-                    FunDebug.Log("Downloading stopped.");
+                    FunDebug.Log("Downloader - stopped.");
 
                     onFinished(DownloadResult.FAILED);
                 }
             }
-            finally
-            {
-                mutex_.ReleaseMutex();
-            }
         }
+
+        public override string name { get { return "FunapiDownloader"; } }
 
         public bool IsPaused { get { return state_ == State.Paused; } }
 
@@ -214,12 +237,6 @@ namespace Fun
         public UInt64 TotalDownloadFileSize { get { return total_download_size_; } }
 
 
-        protected override void onQuit ()
-        {
-            Stop();
-        }
-
-
         void loadCachedList ()
         {
             cached_list_.Clear();
@@ -234,7 +251,7 @@ namespace Fun
 
             if (data.Length <= 0)
             {
-                FunDebug.LogWarning("Failed to get a cached file list.");
+                FunDebug.LogWarning("Downloader.loadCachedList - Failed to load a cached file list.");
                 return;
             }
 
@@ -255,7 +272,7 @@ namespace Fun
                 cached_list_.Add(info);
             }
 
-            FunDebug.DebugLog("Loads cached list : {0}", cached_list_.Count);
+            FunDebug.DebugLog2("Downloader - Loads cached list : {0}", cached_list_.Count);
         }
 
         void updateCachedList ()
@@ -285,15 +302,11 @@ namespace Fun
             stream.Flush();
             stream.Close();
 
-            FunDebug.DebugLog("Updates cached list : {0}", cached_list_.Count);
+            FunDebug.DebugLog2("Downloader - Updates cached list : {0}", cached_list_.Count);
         }
 
         // Checks download file list
-#if !NO_UNITY
         IEnumerator checkFileList (List<DownloadFileInfo> list)
-#else
-        void checkFileList (List<DownloadFileInfo> list)
-#endif
         {
             List<DownloadFileInfo> tmp_list = new List<DownloadFileInfo>(list);
             List<string> verify_file_list = new List<string>();
@@ -321,7 +334,7 @@ namespace Fun
                     if (!rnd_list.Contains(rnd_index))
                         rnd_list.Enqueue(rnd_index);
                 }
-                FunDebug.DebugLog("Random check file count is {0}", rnd_list.Count);
+                FunDebug.DebugLog2("Downloader - Random check file count is {0}", rnd_list.Count);
 
                 rnd_index = rnd_list.Count > 0 ? rnd_list.Dequeue() : -1;
             }
@@ -339,6 +352,7 @@ namespace Fun
                     if (!File.Exists(path) || item.size != info.Length || item.hash != file.hash)
                     {
                         remove_list.Add(file.path);
+                        FunDebug.LogWarning("'{0}' file has been changed or deleted.", file.path);
                     }
                     else
                     {
@@ -352,7 +366,7 @@ namespace Fun
 
                             verify_file_list.Add(file.path);
 
-                            MD5Async.Compute (mono, ref path, ref item,
+                            StartCoroutine(MD5Async.Compute(path, item,
                                 delegate (string p, DownloadFileInfo f, bool is_match)
                                 {
                                     if (VerifyCallback != null)
@@ -370,7 +384,7 @@ namespace Fun
                                         verify_success = false;
                                     }
                                 }
-                            );
+                            ));
                         }
                         else
                         {
@@ -388,16 +402,13 @@ namespace Fun
 
             while (verify_file_list.Count > 0)
             {
-#if !NO_UNITY
-                yield return new WaitForSeconds(0.1f);
-#else
-                Thread.Sleep(100);
-#endif
+                yield return new SleepForSeconds(0.1f);
             }
 
             removeCachedList(remove_list);
 
-            FunDebug.Log("Random validation has {0}", (verify_success ? "succeeded" : "failed"));
+            FunDebug.DebugLog2("Downloader - Random validation has {0}",
+                               (verify_success ? "succeeded" : "failed"));
 
             // Checks all local files
             if (!verify_success)
@@ -410,7 +421,7 @@ namespace Fun
                         verify_file_list.Add(file.path);
 
                         string path = target_path_ + file.path;
-                        MD5Async.Compute(mono, ref path, ref item,
+                        StartCoroutine(MD5Async.Compute(path, item,
                             delegate (string p, DownloadFileInfo f, bool is_match)
                             {
                                 if (VerifyCallback != null)
@@ -426,24 +437,22 @@ namespace Fun
                                         list.Add(f);
                                 }
                             }
-                        );
+                        ));
                     }
                 }
 
                 while (verify_file_list.Count > 0)
                 {
-#if !NO_UNITY
-                    yield return new WaitForSeconds(0.1f);
-#else
-                    Thread.Sleep(100);
-#endif
+                    yield return new SleepForSeconds(0.1f);
                 }
 
                 removeCachedList(remove_list);
             }
 
             elapsed_time.Stop();
-            FunDebug.Log("File check total time - {0:F2}s", elapsed_time.ElapsedMilliseconds / 1000f);
+
+            FunDebug.Log("Downloader took {0:F2}s to check local files.",
+                         elapsed_time.ElapsedMilliseconds / 1000f);
 
             total_download_count_ = list.Count;
 
@@ -452,23 +461,27 @@ namespace Fun
                 total_download_size_ += item.size;
             }
 
+            // Deletes files
+            deleteLocalFiles();
+
             if (total_download_count_ > 0)
             {
                 state_ = State.Ready;
 
-                event_list.Add (delegate
+                event_.Add (delegate
                 {
+                    FunDebug.Log("Downloader - Ready to download.");
+
                     if (ReadyCallback != null)
                         ReadyCallback(total_download_count_, total_download_size_);
                 });
             }
             else
             {
-                deleteLocalFiles();
                 updateCachedList();
 
                 state_ = State.Completed;
-                FunDebug.Log("All resources are up to date.");
+                FunDebug.Log("Downloader - All resources are up to date.");
                 onFinished(DownloadResult.SUCCESS);
             }
         }
@@ -483,7 +496,8 @@ namespace Fun
 
             foreach (string path in remove_list)
             {
-                delete_file_list_.Add(target_path_ + path);
+                if (File.Exists(path))
+                    delete_file_list_.Add(target_path_ + path);
             }
 
             remove_list.Clear();
@@ -494,12 +508,14 @@ namespace Fun
             if (delete_file_list_.Count <= 0)
                 return;
 
+            FunDebug.Log("Downloader - Try to delete {0} local files.", delete_file_list_.Count);
+
             foreach (string path in delete_file_list_)
             {
                 if (File.Exists(path))
                 {
                     File.Delete(path);
-                    FunDebug.Log("Deleted resource file \npath: {0}", path);
+                    FunDebug.DebugLog1("'{0}' file deleted.\npath: {1}", Path.GetFileName(path), path);
                 }
             }
 
@@ -511,12 +527,12 @@ namespace Fun
             try
             {
                 // Request a list of download files.
-                FunDebug.Log("Getting list file from {0}", url);
+                FunDebug.Log("Downloader - Getting list file from {0}", url);
                 web_client_.DownloadDataAsync(new Uri(url));
             }
             catch (Exception e)
             {
-                FunDebug.Log("Failure in downloadListFile: {0}", e.ToString());
+                FunDebug.LogError("Failure in Downloader.downloadListFile: {0}", e.ToString());
                 Stop();
             }
         }
@@ -527,20 +543,41 @@ namespace Fun
             if (state_ != State.Downloading)
                 return;
 
-            if (download_list_.Count <= 0)
+            if (download_list_.Count <= 0 ||
+                (partial_downloading_ && partial_download_list_.Count <= 0))
             {
                 updateCachedList();
 
                 download_time_.Stop();
-                FunDebug.Log("File download total time - {0:F2}s", download_time_.ElapsedMilliseconds / 1000f);
+                FunDebug.Log("Downloader took {0:F2}s for download all files.",
+                             download_time_.ElapsedMilliseconds / 1000f);
 
-                state_ = State.Completed;
-                FunDebug.Log("Download completed.");
+                if (partial_downloading_)
+                {
+                    if (download_list_.Count > 0)
+                        state_ = State.Ready;
+                    else
+                        state_ = State.Completed;
+
+                    partial_downloading_ = false;
+                    FunDebug.Log("Downloader - Partial downloading completed.");
+                }
+                else
+                {
+                    state_ = State.Completed;
+                    FunDebug.Log("Downloader - Download completed.");
+                }
+
                 onFinished(DownloadResult.SUCCESS);
             }
             else
             {
-                DownloadFileInfo info = download_list_[0];
+                DownloadFileInfo info = null;
+
+                if (partial_downloading_)
+                    info = partial_download_list_[0];
+                else
+                    info = download_list_[0];
 
                 // Check directory
                 string path = target_path_;
@@ -556,92 +593,87 @@ namespace Fun
                     File.Delete(file_path);
 
                 // Requests a file.
-                FunDebug.Log("Download file - {0}", file_path);
+                string request_url = host_url_ + info.path;
+                FunDebug.DebugLog1("Download a file - {0}\nSave to {1}\n", request_url, file_path);
                 cur_download_path_ = Path.GetDirectoryName(file_path);
                 cur_download_path_ += "/" + Path.GetRandomFileName();
 
-                web_client_.DownloadFileAsync(new Uri(host_url_ + info.path), cur_download_path_, info);
+                web_client_.DownloadFileAsync(new Uri(request_url), cur_download_path_, info);
             }
         }
 
         // Callback function for list of files
         void downloadDataCompleteCb (object sender, DownloadDataCompletedEventArgs ar)
         {
-            mutex_.WaitOne();
-
             bool failed = false;
             try
             {
-                if (ar.Error != null)
+                lock (lock_)
                 {
-                    FunDebug.Log("Exception Error: {0}", ar.Error);
-                    failed = true;
-                }
-                else
-                {
-                    // It can be true when CancelAsync() called in Stop().
-                    if (ar.Cancelled)
-                        return;
-
-                    // Parse json
-                    string data = Encoding.UTF8.GetString(ar.Result);
-                    Dictionary<string, object> json = Json.Deserialize(data) as Dictionary<string, object>;
-
-                    //FunDebug.Log("Json data >> {0}", data);
-
-                    // Redirect url
-                    if (json.ContainsKey("url"))
+                    if (ar.Error != null)
                     {
-                        string url = json["url"] as string;
-                        if (url[url.Length - 1] != '/')
-                            url += "/";
-
-                        host_url_ = url;
-                        FunDebug.Log("Redirect download url: {0}", host_url_);
-                    }
-
-                    List<object> list = json["data"] as List<object>;
-                    if (list.Count <= 0)
-                    {
-                        FunDebug.Log("Invalid list data. List count is 0.");
-                        FunDebug.Assert(false);
+                        FunDebug.LogError("Downloader - Exception error: {0}", ar.Error);
                         failed = true;
                     }
                     else
                     {
-                        download_list_.Clear();
+                        // It can be true when CancelAsync() called in Stop().
+                        if (ar.Cancelled)
+                            return;
 
-                        foreach (Dictionary<string, object> node in list)
+                        // Parse json
+                        string data = Encoding.UTF8.GetString(ar.Result);
+                        Dictionary<string, object> json = Json.Deserialize(data) as Dictionary<string, object>;
+
+                        //FunDebug.Log("Json data >> {0}", data);
+
+                        // Redirect url
+                        if (json.ContainsKey("url"))
                         {
-                            DownloadFileInfo info = new DownloadFileInfo();
-                            info.path = node["path"] as string;
-                            info.size = Convert.ToUInt32(node["size"]);
-                            info.hash = node["md5"] as string;
-                            if (node.ContainsKey("md5_front"))
-                                info.hash_front = node["md5_front"] as string;
-                            else
-                                info.hash_front = "";
+                            string url = json["url"] as string;
+                            if (url[url.Length - 1] != '/')
+                                url += "/";
 
-                            download_list_.Add(info);
+                            host_url_ = url;
+                            FunDebug.Log("Redirect download url: {0}", host_url_);
                         }
 
-                        // Checks files
-#if !NO_UNITY
-                        event_list.Add(() => mono.StartCoroutine(checkFileList(download_list_)));
-#else
-                        event_list.Add(() => mono.StartCoroutine(() => checkFileList(download_list_)));
-#endif
+                        List<object> list = json["data"] as List<object>;
+                        if (list.Count <= 0)
+                        {
+                            FunDebug.LogWarning("Invalid list data. List count is 0.");
+                            FunDebug.Assert(false);
+                            failed = true;
+                        }
+                        else
+                        {
+                            download_list_.Clear();
+                            partial_download_list_.Clear();
+
+                            foreach (Dictionary<string, object> node in list)
+                            {
+                                DownloadFileInfo info = new DownloadFileInfo();
+                                info.path = node["path"] as string;
+                                info.size = Convert.ToUInt32(node["size"]);
+                                info.hash = node["md5"] as string;
+                                if (node.ContainsKey("md5_front"))
+                                    info.hash_front = node["md5_front"] as string;
+                                else
+                                    info.hash_front = "";
+
+                                download_list_.Add(info);
+                            }
+
+                            // Checks files
+                            event_.Add(() => StartCoroutine(checkFileList(download_list_)));
+                        }
                     }
                 }
             }
             catch (Exception e)
             {
-                FunDebug.Log("Failure in downloadDataCompleteCb: {0}", e.ToString());
+                FunDebug.LogError("Failure in Downloader.downloadDataCompleteCb: {0}", e.ToString());
                 failed = true;
-            }
-            finally
-            {
-                mutex_.ReleaseMutex();
             }
 
             if (failed)
@@ -666,54 +698,55 @@ namespace Fun
         // Callback function for downloaded file.
         void downloadFileCompleteCb (object sender, System.ComponentModel.AsyncCompletedEventArgs ar)
         {
-            mutex_.WaitOne();
-
             bool failed = false;
             try
             {
-                // It can be true when CancelAsync() called in Stop().
-                if (ar.Cancelled)
+                lock (lock_)
                 {
-                    File.Delete(cur_download_path_);
-                    return;
-                }
-
-                if (ar.Error != null)
-                {
-                    FunDebug.Log("Exception Error: {0}", ar.Error);
-                    failed = true;
-                }
-                else
-                {
-                    var info = (DownloadFileInfo)ar.UserState;
-                    if (info == null)
+                    // It can be true when CancelAsync() called in Stop().
+                    if (ar.Cancelled)
                     {
-                        FunDebug.Log("DownloadFileInfo object is null.");
+                        File.Delete(cur_download_path_);
+                        return;
+                    }
+
+                    if (ar.Error != null)
+                    {
+                        FunDebug.LogError("Downloader - Exception error: {0}", ar.Error);
                         failed = true;
                     }
                     else
                     {
-                        string path = target_path_ + info.path;
-                        File.Move(cur_download_path_, path);
+                        var info = (DownloadFileInfo)ar.UserState;
+                        if (info == null)
+                        {
+                            FunDebug.LogWarning("Downloader - DownloadFileInfo object is null.");
+                            failed = true;
+                        }
+                        else
+                        {
+                            string path = target_path_ + info.path;
+                            File.Move(cur_download_path_, path);
 
-                        ++cur_download_count_;
-                        retry_download_count_ = 0;
-                        cur_download_size_ += info.size;
-                        download_list_.Remove(info);
-                        cached_list_.Add(info);
+                            ++cur_download_count_;
+                            retry_download_count_ = 0;
+                            cur_download_size_ += info.size;
+                            cached_list_.Add(info);
 
-                        downloadResourceFile();
+                            if (partial_downloading_)
+                                partial_download_list_.Remove(info);
+                            else
+                                download_list_.Remove(info);
+
+                            downloadResourceFile();
+                        }
                     }
                 }
             }
             catch (Exception e)
             {
-                FunDebug.Log("Failure in downloadFileCompleteCb: {0}", e.ToString());
+                FunDebug.LogError("Failure in Downloader.downloadFileCompleteCb: {0}", e.ToString());
                 failed = true;
-            }
-            finally
-            {
-                mutex_.ReleaseMutex();
             }
 
             if (failed)
@@ -724,11 +757,7 @@ namespace Fun
                 if (retry_download_count_ < kRetryCountMax)
                 {
                     ++retry_download_count_;
-#if !NO_UNITY
-                    event_list.Add(() => mono.StartCoroutine(retryDownloadFile()));
-#else
-                    event_list.Add(() => mono.StartCoroutine(() => retryDownloadFile()));
-#endif
+                    event_.Add(() => StartCoroutine(retryDownloadFile()));
                 }
                 else
                 {
@@ -737,33 +766,21 @@ namespace Fun
             }
         }
 
-#if !NO_UNITY
         IEnumerator retryDownloadFile ()
         {
             float time = 1f;
             for (int i = 0; i < retry_download_count_; ++i)
                 time *= 2f;
-            yield return new WaitForSeconds(time);
+            yield return new SleepForSeconds(time);
 
             downloadResourceFile();
         }
-#else
-        void retryDownloadFile ()
-        {
-            int time = 1000;
-            for (int i = 0; i < retry_download_count_; ++i)
-                time *= 2;
-            Thread.Sleep(time);
-
-            downloadResourceFile();
-        }
-#endif
 
         void onFinished (DownloadResult code)
         {
-            event_list.Add (delegate
+            event_.Add (delegate
             {
-                releaseUpdater();
+                releaseMonoListener();
 
                 if (FinishedCallback != null)
                     FinishedCallback(code);
@@ -797,20 +814,16 @@ namespace Fun
             Completed
         }
 
-        public delegate void VerifyEventHandler (string path);
-        public delegate void ReadyEventHandler (int total_count, UInt64 total_size);
-        public delegate void UpdateEventHandler (string path, long bytes_received, long total_bytes, int percentage);
-        public delegate void FinishEventHandler (DownloadResult code);
-
-        public event VerifyEventHandler VerifyCallback;
-        public event ReadyEventHandler ReadyCallback;
-        public event UpdateEventHandler UpdateCallback;
-        public event FinishEventHandler FinishedCallback;
+        public event Action<string> VerifyCallback;                   // path
+        public event Action<int, UInt64> ReadyCallback;               // total count, total size
+        public event Action<string, long, long, int> UpdateCallback;  // path, received bytes, total bytes, percentage
+        public event Action<DownloadResult> FinishedCallback;         // result code
 
         // Save file-related constants.
         const string kRootPath = "client_data";
         const string kCachedFileName = "cached_files";
         const int kRetryCountMax = 3;
+
 
         // member variables.
         State state_ = State.None;
@@ -823,11 +836,16 @@ namespace Fun
         UInt64 total_download_size_ = 0;
         int retry_download_count_ = 0;
 
-        Mutex mutex_ = new Mutex();
+        object lock_ = new object();
         WebClient web_client_ = new WebClient();
         List<DownloadFileInfo> cached_list_ = new List<DownloadFileInfo>();
         List<DownloadFileInfo> download_list_ = new List<DownloadFileInfo>();
         List<string> delete_file_list_ = new List<string>();
         Stopwatch download_time_ = new Stopwatch();
+
+        // partial download-related variables
+        bool partial_downloading_ = false;
+        UInt64 partial_download_size_ = 0;
+        List<DownloadFileInfo> partial_download_list_ = new List<DownloadFileInfo>();
     }
 }

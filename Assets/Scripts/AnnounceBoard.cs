@@ -128,7 +128,7 @@ public class AnnounceBoard : MonoBehaviour
     // Member variables.
     private FunapiAnnouncement announce_ = null;
 
-    private ThreadSafeEventList event_ = new ThreadSafeEventList();
+    private PostEventList event_ = new PostEventList();
 
     private RectTransform content_rect_ = null;
     private Transform content_transform_ = null;

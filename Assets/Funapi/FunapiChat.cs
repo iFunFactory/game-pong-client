@@ -1,4 +1,4 @@
-// Copyright 2013-2016 iFunFactory Inc. All Rights Reserved.
+// Copyright 2013 iFunFactory Inc. All Rights Reserved.
 //
 // This work is confidential and proprietary to iFunFactory Inc. and
 // must not be used, disclosed, copied, or distributed without the prior
@@ -23,23 +23,21 @@ namespace Fun
             ErrorCallback += onError;
         }
 
-        public bool JoinChannel (string channel_id, string my_name, OnChatMessage handler)
-        {
-            sender_ = my_name;
-
-            return this.JoinChannel(channel_id, handler);
-        }
-
         public bool JoinChannel (string channel_id, OnChatMessage handler)
         {
-            if (!base.JoinChannel(channel_id, onReceived))
+            return this.JoinChannel(channel_id, "", handler);
+        }
+
+        public bool JoinChannel (string channel_id, string token, OnChatMessage handler)
+        {
+            if (!base.JoinChannel(channel_id, token, onReceived))
                 return false;
 
             lock (chat_channel_lock_)
             {
                 if (chat_channels_.ContainsKey(channel_id))
                 {
-                    FunDebug.Log("Already joined the '{0}' channel.", channel_id);
+                    FunDebug.LogWarning("Already joined the '{0}' channel.", channel_id);
                     return false;
                 }
 
@@ -81,7 +79,7 @@ namespace Fun
                 FunChatMessage chat_msg = new FunChatMessage ();
                 chat_msg.text = text;
 
-                FunMulticastMessage mcast_msg = FunapiMessage.CreateFunMessage(chat_msg, MulticastMessageType.chat);
+                FunMulticastMessage mcast_msg = FunapiMessage.CreateMulticastMessage(chat_msg, MulticastMessageType.chat);
                 mcast_msg.channel = channel_id;
                 mcast_msg.bounce = true;
 
@@ -104,7 +102,7 @@ namespace Fun
                 {
                     if (!chat_channels_.ContainsKey(channel_id))
                     {
-                        FunDebug.Log("You are not in the '{0}' channel.", channel_id);
+                        FunDebug.LogWarning("You are not in the '{0}' channel.", channel_id);
                         return;
                     }
 
@@ -129,11 +127,10 @@ namespace Fun
             }
             else
             {
-                FunDebug.Assert(data is FunMulticastMessage);
                 FunMulticastMessage mcast_msg = data as FunMulticastMessage;
-
-                object obj = FunapiMessage.GetMessage(mcast_msg, MulticastMessageType.chat);
-                FunChatMessage chat_msg = obj as FunChatMessage;
+                FunChatMessage chat_msg = FunapiMessage.GetMulticastMessage<FunChatMessage>(mcast_msg, MulticastMessageType.chat);
+                if (chat_msg == null)
+                    return;
 
                 lock (chat_channel_lock_)
                 {
@@ -147,9 +144,7 @@ namespace Fun
 
         void onError (string channel_id, FunMulticastMessage.ErrorCode code)
         {
-            if (code == FunMulticastMessage.ErrorCode.EC_FULL_MEMBER ||
-                code == FunMulticastMessage.ErrorCode.EC_ALREADY_LEFT ||
-                code == FunMulticastMessage.ErrorCode.EC_CLOSED)
+            if (code != FunMulticastMessage.ErrorCode.EC_ALREADY_JOINED)
             {
                 lock (chat_channel_lock_)
                 {

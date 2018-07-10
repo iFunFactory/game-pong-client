@@ -20,7 +20,7 @@ namespace Fun
 
         public override void Init(params object[] param)
         {
-            FunDebug.DebugLog("FacebookConnector.Init called.");
+            FunDebug.DebugLog1("FacebookConnector.Init called.");
             if (!FB.IsInitialized)
             {
                 // Initialize the Facebook SDK
@@ -36,13 +36,13 @@ namespace Fun
 
         public void LogInWithRead(List<string> perms)
         {
-            FunDebug.DebugLog("Request facebook login with read.");
+            FunDebug.DebugLog1("Request facebook login with read.");
             FB.LogInWithReadPermissions(perms, OnLoginCb);
         }
 
         public void LogInWithPublish(List<string> perms)
         {
-            FunDebug.DebugLog("Request facebook login with publish.");
+            FunDebug.DebugLog1("Request facebook login with publish.");
             FB.LogInWithPublishPermissions(perms, OnLoginCb);
         }
 
@@ -148,7 +148,7 @@ namespace Fun
 
                 if (FB.IsLoggedIn)
                 {
-                    FunDebug.DebugLog("Already logged in.");
+                    FunDebug.DebugLog1("Already logged in.");
                     OnEventNotify(SNResultCode.kLoggedIn);
                 }
                 else
@@ -164,24 +164,24 @@ namespace Fun
 
         private void OnHideCb(bool isGameShown)
         {
-            FunDebug.DebugLog("isGameShown: {0}", isGameShown);
+            FunDebug.DebugLog1("isGameShown: {0}", isGameShown);
         }
 
         private void OnLoginCb(ILoginResult result)
         {
             if (result.Error != null)
             {
-                FunDebug.DebugLogError(result.Error);
+                FunDebug.LogError(result.Error);
                 OnEventNotify(SNResultCode.kLoginFailed);
             }
             else if (!FB.IsLoggedIn)
             {
-                FunDebug.DebugLog("User cancelled login.");
+                FunDebug.DebugLog1("User cancelled login.");
                 OnEventNotify(SNResultCode.kLoginFailed);
             }
             else
             {
-                FunDebug.DebugLog("Login successful!");
+                FunDebug.DebugLog1("Login successful!");
 
                 // AccessToken class will have session details
                 var aToken = AccessToken.CurrentAccessToken;
@@ -213,10 +213,10 @@ namespace Fun
 
         private void OnMyProfileCb(IGraphResult result)
         {
-            FunDebug.DebugLog("OnMyProfileCb called.");
+            FunDebug.DebugLog1("OnMyProfileCb called.");
             if (result.Error != null)
             {
-                FunDebug.DebugLogError(result.Error);
+                FunDebug.LogError(result.Error);
                 OnEventNotify(SNResultCode.kError);
                 return;
             }
@@ -226,7 +226,7 @@ namespace Fun
                 Dictionary<string, object> json = Json.Deserialize(result.RawResult) as Dictionary<string, object>;
                 if (json == null)
                 {
-                    FunDebug.DebugLogError("OnMyProfileCb - json is null.");
+                    FunDebug.LogError("OnMyProfileCb - json is null.");
                     OnEventNotify(SNResultCode.kError);
                     return;
                 }
@@ -246,7 +246,7 @@ namespace Fun
             }
             catch (Exception e)
             {
-                FunDebug.DebugLogError("Failure in OnMyProfileCb: " + e.ToString());
+                FunDebug.LogError("Failure in OnMyProfileCb: " + e.ToString());
             }
         }
 
@@ -257,7 +257,7 @@ namespace Fun
                 Dictionary<string, object> json = Json.Deserialize(result.RawResult) as Dictionary<string, object>;
                 if (json == null)
                 {
-                    FunDebug.DebugLogError("OnFriendListCb - json is null.");
+                    FunDebug.LogError("OnFriendListCb - json is null.");
                     OnEventNotify(SNResultCode.kError);
                     return;
                 }
@@ -267,7 +267,7 @@ namespace Fun
                 json.TryGetValue("friends", out friend_list);
                 if (friend_list == null)
                 {
-                    FunDebug.DebugLogError("OnInviteListCb - friend_list is null.");
+                    FunDebug.LogError("OnInviteListCb - friend_list is null.");
                     OnEventNotify(SNResultCode.kError);
                     return;
                 }
@@ -286,7 +286,7 @@ namespace Fun
                     user.url = picture["url"] as string;
 
                     friends_.Add(user);
-                    FunDebug.DebugLog("> id:{0} name:{1} url:{2}", user.id, user.name, user.url);
+                    FunDebug.DebugLog1("> id:{0} name:{1} url:{2}", user.id, user.name, user.url);
                 }
 
                 FunDebug.Log("Succeeded in getting the friend list. count:{0}", friends_.Count);
@@ -297,7 +297,7 @@ namespace Fun
             }
             catch (Exception e)
             {
-                FunDebug.DebugLogError("Failure in OnFriendListCb: " + e.ToString());
+                FunDebug.LogError("Failure in OnFriendListCb: " + e.ToString());
             }
         }
 
@@ -308,7 +308,7 @@ namespace Fun
                 Dictionary<string, object> json = Json.Deserialize(result.RawResult) as Dictionary<string, object>;
                 if (json == null)
                 {
-                    FunDebug.DebugLogError("OnInviteListCb - json is null.");
+                    FunDebug.LogError("OnInviteListCb - json is null.");
                     OnEventNotify(SNResultCode.kError);
                     return;
                 }
@@ -317,7 +317,7 @@ namespace Fun
                 json.TryGetValue("invitable_friends", out invitable_friends);
                 if (invitable_friends == null)
                 {
-                    FunDebug.DebugLogError("OnInviteListCb - invitable_friends is null.");
+                    FunDebug.LogError("OnInviteListCb - invitable_friends is null.");
                     OnEventNotify(SNResultCode.kError);
                     return;
                 }
@@ -337,7 +337,7 @@ namespace Fun
                     user.url = url;
 
                     invite_friends_.Add(user);
-                    FunDebug.DebugLog(">> id:{0} name:{1} url:{2}", user.id, user.name, user.url);
+                    FunDebug.DebugLog1(">> id:{0} name:{1} url:{2}", user.id, user.name, user.url);
                 }
 
                 FunDebug.Log("Succeeded in getting the invite list.");
@@ -348,7 +348,7 @@ namespace Fun
             }
             catch (Exception e)
             {
-                FunDebug.DebugLogError("Failure in OnInviteListCb: " + e.ToString());
+                FunDebug.LogError("Failure in OnInviteListCb: " + e.ToString());
             }
         }
 
@@ -384,10 +384,10 @@ namespace Fun
 
         private void PostCallback(IGraphResult result)
         {
-            FunDebug.DebugLog("PostCallback called.");
+            FunDebug.DebugLog1("PostCallback called.");
             if (result.Error != null)
             {
-                FunDebug.DebugLogError(result.Error);
+                FunDebug.LogError(result.Error);
                 OnEventNotify(SNResultCode.kPostFailed);
                 return;
             }
