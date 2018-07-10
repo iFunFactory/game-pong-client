@@ -5,13 +5,28 @@ using UnityEngine;
 
 public class NetworkManager : Singleton<NetworkManager>
 {
-    // 서버 주소를 수정하세요.
-    public string kServerAddr = "127.0.0.1";
+    // 로비 서버 주소를 수정하세요.
+    // 게임 서버의 주소는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+    public string kLobbyServerAddr = "";
 
-    // 서버 포트 정보
-    private const ushort kServerTcpPort = 8012;
-    private const ushort kServerUdpPort = 8013;
-    private const ushort kServerHttpPort = 8018;
+    // 로비 서버 포트 정보를 수정하세요.
+    // 서버측 MANIFEST.lobby.json 상에서 활성화된 포트 번호를 여기 기재합니다.
+    // 게임 서버의 포트는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+    private const ushort kLobbyServerPort = 8012;
+
+    // 로비 서버에 접속할 프로토콜을 지정하세요.
+    // kTcp, kUdp, kHttp 가 가능합니다.
+    // 게임 서버의 경우는 매치메이킹 이후 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+    // 여기의 값을 수정하게 될 경우, MANIFEST.lobby.json 의 포트 정보 역시 수정해야됩니다.
+    // (예, TCP 에 JSON 을 쓸 경우 "tcp_json_port" 값을 0 이 아닌 값으로 지정)
+    private TransportProtocol kLobbyServerProtocol = TransportProtocol.kTcp;
+
+    // 클라이언트-서버 통신에 사용될 메시지 포맷을 지정하세요.
+    // kJson 과 kProtobuf 가 가능합니다.
+    // 게임 서버의 경우는 매치메이킹 이후 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+    // 여기의 값을 수정하게 될 경우, MANIFEST.lobby.json 의 포트 정보 역시 수정해야됩니다.
+    // (예, TCP 에 JSON 을 쓸 경우 "tcp_json_port" 값을 0 이 아닌 값으로 지정)
+    public FunEncoding kLobbyServerEncoding = FunEncoding.kJson;
 
     // Options
     public bool sessionReliability = false;
@@ -65,69 +80,19 @@ public class NetworkManager : Singleton<NetworkManager>
 
         if (session == null)
         {
-            session = FunapiSession.Create(kServerAddr, sessionReliability);
+            if (kLobbyServerAddr == "")
+            {
+                ModalWindow.Instance.Open("Network Error", "Server address was not given.", AppUtil.Quit);
+            }
+
+            session = FunapiSession.Create(kLobbyServerAddr, sessionReliability);
             session.SessionEventCallback += OnSessionEvent;
             session.TransportEventCallback += OnTransportEvent;
+	    session.TransportOptionCallback += OnTransportOption;
             session.ReceivedMessageCallback += OnReceive;
         }
-        tryConnect(TransportProtocol.kTcp);
-    }
-
-    private void tryConnect(TransportProtocol protocol)
-    {
-        TransportOption option = makeOption(protocol);
-        ushort port = getPort(protocol, FunEncoding.kJson);
-
-        session.Connect(protocol, FunEncoding.kJson, port, option);
-    }
-
-    private ushort getPort(TransportProtocol protocol, FunEncoding encoding)
-    {
-        ushort port = 0;
-        if (protocol == TransportProtocol.kTcp)
-            port = kServerTcpPort;
-        else if (protocol == TransportProtocol.kUdp)
-            port = kServerUdpPort;
-        else if (protocol == TransportProtocol.kHttp)
-            port = kServerHttpPort;
-
-        return port;
-    }
-
-    private TransportOption makeOption(TransportProtocol protocol)
-    {
-        TransportOption option = null;
-
-        if (protocol == TransportProtocol.kTcp)
-        {
-            TcpTransportOption tcp_option = new TcpTransportOption();
-            tcp_option.Encryption = tcpEncryption;
-            tcp_option.AutoReconnect = autoReconnect;
-            tcp_option.DisableNagle = disableNagle;
-
-            if (usePing)
-                tcp_option.SetPing(1, 20, true);
-
-            option = tcp_option;
-        }
-        else if (protocol == TransportProtocol.kUdp)
-        {
-            option = new TransportOption();
-            option.Encryption = udpEncryption;
-        }
-        else if (protocol == TransportProtocol.kHttp)
-        {
-            HttpTransportOption http_option = new HttpTransportOption();
-            http_option.Encryption = httpEncryption;
-            http_option.UseWWW = useWWW;
-
-            option = http_option;
-        }
-
-        option.ConnectionTimeout = 10f;
-        option.SequenceValidation = sequenceValidation;
-
-        return option;
+        TransportOption transport_opt = OnTransportOption("lobby", kLobbyServerProtocol);
+	    session.Connect(kLobbyServerProtocol, kLobbyServerEncoding, kLobbyServerPort, transport_opt);
     }
 
     public bool IsReady
@@ -197,6 +162,43 @@ public class NetworkManager : Singleton<NetworkManager>
                 ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
                 break;
         }
+    }
+
+    // transport 별 옵션 처리
+    private TransportOption OnTransportOption(string server_flavor, TransportProtocol protocol)
+    {
+        TransportOption option = null;
+
+        if (protocol == TransportProtocol.kTcp)
+        {
+            TcpTransportOption tcp_option = new TcpTransportOption();
+            tcp_option.Encryption = tcpEncryption;
+            tcp_option.AutoReconnect = autoReconnect;
+            tcp_option.DisableNagle = disableNagle;
+
+            if (usePing)
+                tcp_option.SetPing(1, 20, true);
+
+            option = tcp_option;
+        }
+        else if (protocol == TransportProtocol.kUdp)
+        {
+            option = new TransportOption();
+            option.Encryption = udpEncryption;
+        }
+        else if (protocol == TransportProtocol.kHttp)
+        {
+            HttpTransportOption http_option = new HttpTransportOption();
+            http_option.Encryption = httpEncryption;
+            http_option.UseWWW = useWWW;
+
+            option = http_option;
+        }
+
+        option.ConnectionTimeout = 10f;
+        option.SequenceValidation = sequenceValidation;
+
+        return option;
     }
 
     // 메세지 핸들러
