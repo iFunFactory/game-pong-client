@@ -1,7 +1,12 @@
-﻿using System;
+﻿using Fun;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+
+// protobuf
+using funapi.network.fun_message;
+using pong_messages;
 
 public class GameLogic : Singleton<GameLogic>
 {
@@ -154,7 +159,11 @@ public class GameLogic : Singleton<GameLogic>
                         }
                         else
                         {
-                            // TODO(dkmoon): Protobuf
+                            GameResultMessage msg = new GameResultMessage();
+                            msg.result = "lose";
+
+                            FunMessage fun_msg = FunapiMessage.CreateFunMessage(msg, MessageType.game_result);
+                            NetworkManager.Instance.Send("result", fun_msg);
                         }
                     }
                 }
