@@ -213,6 +213,9 @@ namespace Fun
 
         public bool HasTransport (TransportProtocol protocol)
         {
+            if (protocol == TransportProtocol.kDefault)
+                protocol = DefaultProtocol;
+
             lock (transports_lock_)
             {
                 return transports_.ContainsKey(protocol);
@@ -221,6 +224,9 @@ namespace Fun
 
         public Transport GetTransport (TransportProtocol protocol)
         {
+            if (protocol == TransportProtocol.kDefault)
+                protocol = DefaultProtocol;
+
             lock (transports_lock_)
             {
                 if (transports_.ContainsKey(protocol))
@@ -232,6 +238,9 @@ namespace Fun
 
         public FunEncoding GetEncoding (TransportProtocol protocol)
         {
+            if (protocol == TransportProtocol.kDefault)
+                protocol = DefaultProtocol;
+
             lock (transports_lock_)
             {
                 if (transports_.ContainsKey(protocol))
@@ -243,6 +252,9 @@ namespace Fun
 
         public TransportError.Type GetLastError (TransportProtocol protocol)
         {
+            if (protocol == TransportProtocol.kDefault)
+                protocol = DefaultProtocol;
+
             lock (transports_lock_)
             {
                 if (transports_.ContainsKey(protocol))
