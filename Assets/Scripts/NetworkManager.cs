@@ -3,7 +3,9 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+// protobuf
 using funapi.network.fun_message;
+using pong_messages;
 
 
 public class NetworkManager : Singleton<NetworkManager>
@@ -165,14 +167,18 @@ public class NetworkManager : Singleton<NetworkManager>
                 // 게스트 로그인일 경우 세션이 생성되면, 바로 로그인 한다.
                 if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.MULTI_GUEST)
                 {
-                    if (session.GetEncoding() == FunEncoding.kJson)
+                    if (session.GetEncoding(TransportProtocol.kDefault) == FunEncoding.kJson)
                     {
                         Dictionary<string, object> body = new Dictionary<string, object>();
                         body["id"] = deviceId;
                         body["type"] = "guest";
                         session.SendMessage("login", body);
                     } else {
-                        // TODO(dkmoon)
+                        LobbyLoginRequest msg = new LobbyLoginRequest();
+                        msg.id = deviceId;
+                        msg.type = "guest";
+                        FunMessage fun_msg = FunapiMessage.CreateFunMessage(msg, MessageType.lobby_login_req);
+                        session.SendMessage("login", fun_msg);
                     }
                 }
                 else if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.MULTI_FACEBOOK)
