@@ -261,42 +261,109 @@ public class NetworkManager : Singleton<NetworkManager>
     // 메세지 핸들러
     private void OnReceive(string msg_type, object body)
     {
-        Dictionary<string, object> message = body as Dictionary<string, object>;
+        FunEncoding encoding = session.GetEncoding(TransportProtocol.kDefault);
 
         switch (msg_type)
         {
             case "login":
-                if (message["result"].Equals("ok"))
                 {
-                    myId = message["id"].ToString();
-                    state = STATE.READY;
-                    int winCount;
-                    int loseCount;
-                    int curRecord;
-                    Int32.TryParse(message["winCount"].ToString(), out winCount);
-                    Int32.TryParse(message["loseCount"].ToString(), out loseCount);
-                    Int32.TryParse(message["curRecord"].ToString(), out curRecord);
-                    GameLogic.Instance.SetMatchRecord(winCount, loseCount, curRecord);
-                }
-                else
-                {
-                    // 로그인 실패
-                    state = STATE.ERROR;
+                    string result = "";
+                    string msg = "";
+                    int winCount = 0;
+                    int loseCount = 0;
+                    int curRecord = 0;
 
-                    ModalWindow.Instance.Open("로그인 실패", message["msg"].ToString(), AppUtil.Quit);
+                    if (encoding == FunEncoding.kJson)
+                    {
+                        Dictionary<string, object> message = body as Dictionary<string, object>;
+                        result = message["result"].ToString();
+                        if (result == "ok")
+                        {
+                            myId = message["id"].ToString();
+                            Int32.TryParse(message["winCount"].ToString(), out winCount);
+                            Int32.TryParse(message["loseCount"].ToString(), out loseCount);
+                            Int32.TryParse(message["curRecord"].ToString(), out curRecord);
+                        }
+                        else
+                        {
+                            msg = message["msg"].ToString();
+                        }
+                    }
+                    else if (encoding == FunEncoding.kProtobuf)
+                    {
+                        FunMessage fun_msg = body as FunMessage;
+                        LobbyLoginReply message = FunapiMessage.GetMessage<LobbyLoginReply>(fun_msg, MessageType.lobby_login_repl);
+                        if (message == null)
+                        {
+                            ModalWindow.Instance.Open("Error!", "Invalid protobuf message", GameLogic.Instance.ShowMenu);
+                            return;
+                        }
+                        result = message.result;
+                        if (result == "ok")
+                        {
+                            myId = message.id;
+                            winCount = message.win_count;
+                            loseCount = message.lose_count;
+                            curRecord = message.cur_record;
+                        }
+                        else
+                        {
+                            msg = message.msg;
+                        }
+                    }
+
+                    if (result == "ok")
+                    {
+                        state = STATE.READY;
+                        GameLogic.Instance.SetMatchRecord(winCount, loseCount, curRecord);
+                    }
+                    else
+                    {
+                        // 로그인 실패
+                        state = STATE.ERROR;
+                        ModalWindow.Instance.Open("로그인 실패", msg, AppUtil.Quit);
+                    }
                 }
                 break;
 
             case "match":
                 {
-                    if (message["result"].Equals("Success"))
+                    string result = "";
+                    bool bRoomMaster = false;
+
+                    if (encoding == FunEncoding.kJson)
                     {
-                        // 매칭 성공
+                        Dictionary<string, object> message = body as Dictionary<string, object>;
+                        result = message["result"].ToString();
+                        if (result == "Success")
+                        {
+                            // 매칭 성공
+                            // A player 가 방장이 되어 공을 제어한다.
+                            if (message["A"].Equals(myId))
+                                bRoomMaster = true;
+                        }
+                    }
+                    else if (encoding == FunEncoding.kProtobuf)
+                    {
+                        FunMessage fun_msg = body as FunMessage;
+                        LobbyMatchReply message = FunapiMessage.GetMessage<LobbyMatchReply>(fun_msg, MessageType.lobby_match_repl);
+                        if (message == null)
+                        {
+                            ModalWindow.Instance.Open("Error!", "Invalid protobuf message", GameLogic.Instance.ShowMenu);
+                            return;
+                        }
+                        result = message.result;
+                        if (result == "Success")
+                        {
+                            // 매칭 성공
+                            // A player 가 방장이 되어 공을 제어한다.
+                            if (message.player1 == myId)
+                                bRoomMaster = true;
+                        }
+                    }
 
-                        bool bRoomMaster = false;
-                        if (message["A"].Equals(myId))
-                            bRoomMaster = true;
-
+                    if (result == "Success")
+                    {
                         GameLogic.Instance.OnMatch(bRoomMaster);
                     }
                     else
@@ -306,7 +373,7 @@ public class NetworkManager : Singleton<NetworkManager>
                         var modalContent = "매칭에 실패했습니다.";
 
                         // 매칭 취소
-                        if (message["result"].Equals("Cancel"))
+                        if (result == "Cancel")
                         {
                             modalTitle = "매칭 취소";
                             modalContent = "매칭을 취소했습니다.";
@@ -321,19 +388,38 @@ public class NetworkManager : Singleton<NetworkManager>
                 break;
 
             case "relay":
-                GameLogic.Instance.RelayMessageReceived(message);
+                GameLogic.Instance.RelayMessageReceived(encoding, body);
                 break;
 
             case "result":
-                GameLogic.Instance.ResultMessageReceived(message);
+                GameLogic.Instance.ResultMessageReceived(encoding, body);
                 break;
 
             case "ranklist":
-                GameLogic.Instance.RecordlistMessageReceived(message);
+                GameLogic.Instance.RecordlistMessageReceived(encoding, body);
                 break;
 
             case "error":
-                ModalWindow.Instance.Open("Error!", message["msg"].ToString(), GameLogic.Instance.ShowMenu);
+                {
+                    string msg = "";
+                    if (encoding == FunEncoding.kJson)
+                    {
+                        Dictionary<string, object> message = body as Dictionary<string, object>;
+                        msg = message["msg"].ToString();
+                    }
+                    else
+                    {
+                        FunMessage fun_msg = body as FunMessage;
+                        PongErrorMessage message = FunapiMessage.GetMessage<PongErrorMessage>(fun_msg, MessageType.pong_error);
+                        if (message == null)
+                        {
+                            ModalWindow.Instance.Open("Error!", "Invalid protobuf message", GameLogic.Instance.ShowMenu);
+                            return;
+                        }
+                        msg = message.msg;
+                    }
+                    ModalWindow.Instance.Open("Error!", msg, GameLogic.Instance.ShowMenu);
+                }
                 break;
         }
     }

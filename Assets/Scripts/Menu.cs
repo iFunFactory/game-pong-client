@@ -1,6 +1,11 @@
-﻿using System.Collections.Generic;
+﻿using Fun;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+
+// protobuf
+using funapi.network.fun_message;
+using pong_messages;
 
 public class Menu : MonoBehaviour
 {
@@ -131,21 +136,50 @@ public class Menu : MonoBehaviour
         matchRecord.text = recordText;
     }
 
-    public void SetRecordBoard(Dictionary<string, object> message)
+    public void SetRecordBoard(FunEncoding encoding, object body)
     {
-        var count = message.Count;
         Transform usersTransform = recordBoard.transform.Find("Users");
 
-        for (int i = 0; i < count; i++)
+        if (encoding == FunEncoding.kJson)
         {
-            Dictionary<string, object> subMessage = message[i.ToString()] as Dictionary<string, object>;
-            string gameObjectName = string.Format("User{0}", i + 1);
-            Text textComponent = usersTransform.Find(gameObjectName).transform.GetComponentInChildren<Text>();
+            Dictionary<string, object> message = body as Dictionary<string, object>;
+            Dictionary<string, object> rank = message["ranks"] as Dictionary<string, object>;
+            var count = rank.Count;
 
-            textComponent.text = string.Format("{0}위 : {1}연승\nid: {2} ",
-                subMessage["rank"],
-                subMessage["score"],
-                subMessage["id"]);
+            for (int i = 0; i < count; i++)
+            {
+                Dictionary<string, object> subMessage = rank[i.ToString()] as Dictionary<string, object>;
+                string gameObjectName = string.Format("User{0}", i + 1);
+                Text textComponent = usersTransform.Find(gameObjectName).transform.GetComponentInChildren<Text>();
+
+                textComponent.text = string.Format("{0}위 : {1}연승\nid: {2} ",
+                    subMessage["rank"],
+                    subMessage["score"],
+                    subMessage["id"]);
+            }
+        }
+        else
+        {
+            FunMessage fun_msg = body as FunMessage;
+            LobbyRankListReply message = FunapiMessage.GetMessage<LobbyRankListReply>(fun_msg, MessageType.lobby_rank_list_repl);
+            if (message == null)
+            {
+                ModalWindow.Instance.Open("Error!", "Invalid protobuf message", GameLogic.Instance.ShowMenu);
+                return;
+            }
+
+            int i = 0;
+            foreach (LobbyRankListReply.RankElement subMessage in message.rank)
+            {
+                string gameObjectName = string.Format("User{0}", i+1);
+                Text textComponent = usersTransform.Find(gameObjectName).transform.GetComponentInChildren<Text>();
+
+                textComponent.text = string.Format("{0}위 : {1}연승\nid: {2} ",
+                    subMessage.rank,
+                    subMessage.score,
+                    subMessage.id);
+                ++i;
+            }
         }
     }
 }

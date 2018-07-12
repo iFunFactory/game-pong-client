@@ -197,44 +197,119 @@ public class GameLogic : Singleton<GameLogic>
     }
 
     // 게임 중 정보 업데이트
-    public void RelayMessageReceived(Dictionary<string, object> message)
+    public void RelayMessageReceived(FunEncoding encoding, object body)
     {
-        // 'ball'의 정보가 업데이트됨
-        if (message.ContainsKey("ballX") && message.ContainsKey("ballY") && message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
+        bool update_ball = false;
+        bool update_bar = false;
+        float x = 0.0f, y = 0.0f;
+        float vx = 0.0f, vy = 0.0f;
+        float barTimeSeq = 0.0f;
+        float barX = 0.0f;
+
+        if (encoding == FunEncoding.kJson)
         {
-            float x = Convert.ToSingle(message["ballX"]);
-            float y = Convert.ToSingle(message["ballY"]);
-            float vx = Convert.ToSingle(message["ballVX"]);
-            float vy = Convert.ToSingle(message["ballVY"]);
+            Dictionary<string, object> message = body as Dictionary<string, object>;
+
+            // 'ball'의 정보가 업데이트됨
+            if (message.ContainsKey("ballX") && message.ContainsKey("ballY") && message.ContainsKey("ballVX") && message.ContainsKey("ballVY"))
+            {
+                x = Convert.ToSingle(message["ballX"]);
+                y = Convert.ToSingle(message["ballY"]);
+                vx = Convert.ToSingle(message["ballVX"]);
+                vy = Convert.ToSingle(message["ballVY"]);
+                update_ball = true;
+            }
+
+            // 상대 'bar'의 위치가 변경됨
+            if (message.ContainsKey("barX") && message.ContainsKey("timeSeq"))
+            {
+                barTimeSeq = Convert.ToSingle(message["timeSeq"]);
+                barX = Convert.ToSingle(message["barX"]);
+                update_bar = true;
+            }
+        }
+        else
+        {
+            FunMessage fun_msg = body as FunMessage;
+            GameRelayMessage message = FunapiMessage.GetMessage<GameRelayMessage>(fun_msg, MessageType.game_relay);
+            if (message == null)
+            {
+                ModalWindow.Instance.Open("Error!", "Invalid protobuf message", GameLogic.Instance.ShowMenu);
+                return;
+            }
+
+            // 'ball'의 정보가 업데이트됨
+            if (message.ballXSpecified && message.ballYSpecified && message.ballVXSpecified && message.ballVYSpecified)
+            {
+                x = message.ballX;
+                y = message.ballY;
+                vx = message.ballVX;
+                vy = message.ballVY;
+                update_ball = true;
+            }
+
+            // 상대 'bar'의 위치가 변경됨
+            if (message.barXSpecified && message.timeSeqSpecified)
+            {
+                barX = message.barX;
+                barTimeSeq = message.timeSeq;
+                update_bar = true;
+            }
+        }
+
+        if (update_ball)
+        {
             // 서로 화면을 뒤집어 보기 때문에, 전부 -로 변환필요
             ball.SetProperties(-x, -y, -vx, -vy);
         }
 
-        // 상대 'bar'의 위치가 변경됨
-        if (message.ContainsKey("barX") && message.ContainsKey("timeSeq"))
+        if (update_bar)
         {
-            float barTimeSeq = Convert.ToSingle(message["timeSeq"]);
             if (barTimeSeq > lastBarTimeSeq)
             {
                 lastBarTimeSeq = barTimeSeq;
-                float barX = Convert.ToSingle(message["barX"]);
                 oppBar.SetPosX(-barX);
             }
         }
     }
 
     // 서버의 게임 결과 응답 처리
-    public void ResultMessageReceived(Dictionary<string, object> message)
+    public void ResultMessageReceived(FunEncoding encoding, object body)
     {
         if (state != GAME_STATE.WAIT && state != GAME_STATE.GAME)
             return;
 
         // 게임 결과 화면
         state = GAME_STATE.RESULT;
-
         gameRoot.SetActive(false);
 
-        if (message["result"].Equals("win"))
+        bool win = false;
+
+        if (encoding == FunEncoding.kJson)
+        {
+            Dictionary<string, object> message = body as Dictionary<string, object>;
+
+            if (message["result"].Equals("win"))
+                win = true;
+            else
+                win = false;
+        }
+        else if (encoding == FunEncoding.kProtobuf)
+        {
+            FunMessage fun_msg = body as FunMessage;
+            GameResultMessage message = FunapiMessage.GetMessage<GameResultMessage>(fun_msg, MessageType.game_result);
+            if (message == null)
+            {
+                ModalWindow.Instance.Open("Error!", "Invalid protobuf message", GameLogic.Instance.ShowMenu);
+                return;
+            }
+            if (message.result == "win")
+                win = true;
+            else
+                win = false;
+        }
+
+        if (win)
         {
             SetMatchRecord(winCount_ + 1, loseCount_, curRecord_ + 1);
             ModalWindow.Instance.Open("결과", "승리했습니다!", ShowMenu);
@@ -244,11 +319,12 @@ public class GameLogic : Singleton<GameLogic>
             SetMatchRecord(winCount_, loseCount_ + 1, 0);
             ModalWindow.Instance.Open("결과", "패배했습니다!", ShowMenu);
         }
+
     }
 
-    public void RecordlistMessageReceived(Dictionary<string, object> message)
+    public void RecordlistMessageReceived(FunEncoding encoding, object body)
     {
-        menu.SetRecordBoard(message);
+        menu.SetRecordBoard(encoding, body);
     }
 
     private void setReadyToPlay()

@@ -1,6 +1,10 @@
-﻿using UnityEngine;
+﻿using Fun;
+using UnityEngine;
 using System.Collections.Generic;
 
+// protobuf
+using funapi.network.fun_message;
+using pong_messages;
 
 public class MyBar : DragBar
 {
@@ -30,7 +34,12 @@ public class MyBar : DragBar
             }
             else
             {
-                // TODO(dkmoon): Protobuf
+                GameRelayMessage msg = new GameRelayMessage();
+                msg.timeSeq = Time.realtimeSinceStartup;
+                msg.barX = transform.localPosition.x;
+
+                FunMessage fun_msg = FunapiMessage.CreateFunMessage(msg, MessageType.game_relay);
+                NetworkManager.Instance.Send("relay", fun_msg);
             }
         }
     }

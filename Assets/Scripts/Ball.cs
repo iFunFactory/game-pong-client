@@ -1,6 +1,10 @@
-﻿using UnityEngine;
+﻿using Fun;
+using UnityEngine;
 using System.Collections.Generic;
 
+// protobuf
+using funapi.network.fun_message;
+using pong_messages;
 
 public class Ball : MonoBehaviour
 {
@@ -40,7 +44,14 @@ public class Ball : MonoBehaviour
         }
         else
         {
-            // TODO(dkmoon): Protobuf
+            GameRelayMessage msg = new GameRelayMessage();
+            msg.ballX = transform.localPosition.x;
+            msg.ballY = transform.localPosition.y;
+            msg.ballVX = rigidBody.velocity.x;
+            msg.ballVY = rigidBody.velocity.y;
+
+            FunMessage fun_msg = FunapiMessage.CreateFunMessage(msg, MessageType.game_relay);
+            NetworkManager.Instance.Send("relay", fun_msg);
         }
     }
 
