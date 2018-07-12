@@ -116,7 +116,7 @@ public class GameLogic : Singleton<GameLogic>
         setReadyToPlay();
 
         // 준비 완료 메세지 송신
-        Invoke("sendReady", 1);
+        Invoke("sendReady", 3);
     }
 
     // 준비 완료 메세지 송신
