@@ -83,7 +83,9 @@ public class Menu : MonoBehaviour
         OnDefaultMainMenu();
         btnStart.interactable = false;
         btnMatching.interactable = true;
-        btnAnnouncements.interactable = true;
+
+        // TODO(dkmoon): Annoucements server 주소 입력 받게 한 뒤에 이걸 다시 활성화해야함
+        btnAnnouncements.interactable = false;
         btnLeaderboard.interactable = true;
     }
 
