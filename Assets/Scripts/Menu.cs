@@ -14,6 +14,8 @@ public class Menu : MonoBehaviour
     private Button btnStart = null;
     private Button btnMatching = null;
     private Button btnCancelMatching = null;
+    private Button btnAnnouncements = null;
+    private Button btnLeaderboard = null;
     private Text matchRecord;
     private GameObject login;
     private GameObject main;
@@ -28,6 +30,8 @@ public class Menu : MonoBehaviour
         btnStart = main.transform.Find("StartGame").GetComponent<Button>();
         btnMatching = main.transform.Find("StartMatching").GetComponent<Button>();
         btnCancelMatching = main.transform.Find("CancelMatching").GetComponent<Button>();
+        btnAnnouncements = main.transform.Find("Announcements").GetComponent<Button>();
+        btnLeaderboard = main.transform.Find("LeaderBoard").GetComponent<Button>();
         matchRecord = main.transform.Find("MatchRecord").GetComponent<Text>();
         OnLoginMenu();
     }
@@ -70,6 +74,8 @@ public class Menu : MonoBehaviour
         OnDefaultMainMenu();
         btnStart.interactable = true;
         btnMatching.interactable = false;
+        btnAnnouncements.interactable = false;
+        btnLeaderboard.interactable = false;
     }
 
     public void OnMultiplayMainMenu()
@@ -77,6 +83,8 @@ public class Menu : MonoBehaviour
         OnDefaultMainMenu();
         btnStart.interactable = false;
         btnMatching.interactable = true;
+        btnAnnouncements.interactable = true;
+        btnLeaderboard.interactable = true;
     }
 
     private void OnDefaultMainMenu()
