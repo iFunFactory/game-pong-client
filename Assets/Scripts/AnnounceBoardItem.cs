@@ -29,7 +29,7 @@ public class AnnounceBoardItem : MonoBehaviour
 
         // Details
         string details = data["message"] as string;
-        if (details[details.Length - 1] != '\n')
+        if (details.Length > 0 && details[details.Length - 1] != '\n')
             details += "\n";
         details_text_.text = details;
 
