@@ -14,12 +14,12 @@ public class Menu : MonoBehaviour
     private Button btnStart = null;
     private Button btnMatching = null;
     private Button btnCancelMatching = null;
-    private Button btnAnnouncements = null;
     private Button btnLeaderboard = null;
     private Text matchRecord;
     private GameObject login;
     private GameObject main;
     private GameObject recordBoard;
+
 
     private void Awake()
     {
@@ -30,9 +30,9 @@ public class Menu : MonoBehaviour
         btnStart = main.transform.Find("StartGame").GetComponent<Button>();
         btnMatching = main.transform.Find("StartMatching").GetComponent<Button>();
         btnCancelMatching = main.transform.Find("CancelMatching").GetComponent<Button>();
-        btnAnnouncements = main.transform.Find("Announcements").GetComponent<Button>();
         btnLeaderboard = main.transform.Find("LeaderBoard").GetComponent<Button>();
         matchRecord = main.transform.Find("MatchRecord").GetComponent<Text>();
+
         OnLoginMenu();
     }
 
@@ -74,7 +74,6 @@ public class Menu : MonoBehaviour
         OnDefaultMainMenu();
         btnStart.interactable = true;
         btnMatching.interactable = false;
-        btnAnnouncements.interactable = false;
         btnLeaderboard.interactable = false;
     }
 
@@ -83,9 +82,6 @@ public class Menu : MonoBehaviour
         OnDefaultMainMenu();
         btnStart.interactable = false;
         btnMatching.interactable = true;
-
-        // TODO(dkmoon): Annoucements server 주소 입력 받게 한 뒤에 이걸 다시 활성화해야함
-        btnAnnouncements.interactable = false;
         btnLeaderboard.interactable = true;
     }
 
@@ -101,8 +97,15 @@ public class Menu : MonoBehaviour
     /// </summary>
     public void OnAnnounceClicked()
     {
+        NetworkManager.AnnouncementServerSetting setting = NetworkManager.Instance.announcementServer;
+        if (string.IsNullOrEmpty(setting.url))
+        {
+            ModalWindow.Instance.Open("공지 서버", "서버 주소가 설정되어 있지 않습니다.");
+            return;
+        }
+
         gameObject.SetActive(false);
-        announceBoard.Show();
+        announceBoard.Show(setting.url);
     }
 
     public void OnLeaderBoardClicked()

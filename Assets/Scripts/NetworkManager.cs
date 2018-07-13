@@ -10,49 +10,64 @@ using pong_messages;
 
 public class NetworkManager : Singleton<NetworkManager>
 {
-    // 로비 서버 주소를 수정하세요.
-    // 게임 서버의 주소는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
-    public string kLobbyServerAddr = "";
+    [System.Serializable]
+    public class AnnouncementServerSetting
+    {
+        // 샘플용 공지 서버 주소입니다.
+        // 공지 서버를 따로 구성했다면 이 주소를 변경해 주세요.
+        public string url = "https://example.ifunfactory.com";
+    }
 
-    // 로비 서버 포트 정보를 수정하세요.
-    // 서버측 MANIFEST.lobby.json 상에서 활성화된 포트 번호를 여기 기재합니다.
-    // 게임 서버의 포트는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
-    private const ushort kLobbyServerPort = 8012;
+    [System.Serializable]
+    public class LobbyServerSetting
+    {
+        // 로비 서버 주소를 수정하세요.
+        // 게임 서버의 주소는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+        public string address = "";
 
-    // 로비 서버에 접속할 프로토콜을 지정하세요.
-    // kTcp, kUdp, kHttp 가 가능합니다.
-    // 게임 서버의 경우는 매치메이킹 이후 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
-    // 여기의 값을 수정하게 될 경우, MANIFEST.lobby.json 의 포트 정보 역시 수정해야됩니다.
-    // (예, TCP 에 JSON 을 쓸 경우 "tcp_json_port" 값을 0 이 아닌 값으로 지정)
-    private TransportProtocol kLobbyServerProtocol = TransportProtocol.kTcp;
+        // 로비 서버 포트 정보를 수정하세요.
+        // 서버측 MANIFEST.lobby.json 상에서 활성화된 포트 번호를 여기 기재합니다.
+        // 게임 서버의 포트는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+        public ushort port = 8012;
 
-    // 클라이언트-서버 통신에 사용될 메시지 포맷을 지정하세요.
-    // kJson 과 kProtobuf 가 가능합니다.
-    // 게임 서버의 경우는 매치메이킹 이후 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
-    // 여기의 값을 수정하게 될 경우, MANIFEST.lobby.json 의 포트 정보 역시 수정해야됩니다.
-    // (예, TCP 에 JSON 을 쓸 경우 "tcp_json_port" 값을 0 이 아닌 값으로 지정)
-    public FunEncoding kLobbyServerEncoding = FunEncoding.kJson;
+        // 로비 서버에 접속할 프로토콜을 지정하세요.
+        // kTcp, kUdp, kHttp 가 가능합니다.
+        // 게임 서버의 경우는 매치메이킹 이후 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+        // 여기의 값을 수정하게 될 경우, MANIFEST.lobby.json 의 포트 정보 역시 수정해야됩니다.
+        // (예, TCP 에 JSON 을 쓸 경우 "tcp_json_port" 값을 0 이 아닌 값으로 지정)
+        public TransportProtocol protocol = TransportProtocol.kTcp;
 
-    // Options
-    public bool sessionReliability = false;
+        // 클라이언트-서버 통신에 사용될 메시지 포맷을 지정하세요.
+        // kJson 과 kProtobuf 가 가능합니다.
+        // 게임 서버의 경우는 매치메이킹 이후 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
+        // 여기의 값을 수정하게 될 경우, MANIFEST.lobby.json 의 포트 정보 역시 수정해야됩니다.
+        // (예, TCP 에 JSON 을 쓸 경우 "tcp_json_port" 값을 0 이 아닌 값으로 지정)
+        public FunEncoding encoding = FunEncoding.kJson;
 
-    public bool sequenceValidation = false;
-    public int sendingCount = 10;
+        // Options
+        public bool sessionReliability = false;
 
-    [Header("TCP Option")]
-    public EncryptionType tcpEncryption = EncryptionType.kDefaultEncryption;
+        [Header("TCP Option")]
+        public EncryptionType tcpEncryption = EncryptionType.kDefaultEncryption;
 
-    public bool autoReconnect = false;
-    public bool disableNagle = false;
-    public bool usePing = false;
+        public bool autoReconnect = false;
+        public bool disableNagle = false;
+        public bool usePing = false;
 
-    [Header("UDP Option")]
-    public EncryptionType udpEncryption = EncryptionType.kDefaultEncryption;
+        [Header("UDP Option")]
+        public EncryptionType udpEncryption = EncryptionType.kDefaultEncryption;
 
-    [Header("HTTP Option")]
-    public EncryptionType httpEncryption = EncryptionType.kDefaultEncryption;
+        [Header("HTTP Option")]
+        public EncryptionType httpEncryption = EncryptionType.kDefaultEncryption;
 
-    public bool useWWW = false;
+        public bool useWWW = false;
+    }
+
+    public AnnouncementServerSetting announcementServer;
+
+    [Space(5)]
+    public LobbyServerSetting lobbyServer;
+
 
     private enum STATE
     {
@@ -70,12 +85,11 @@ public class NetworkManager : Singleton<NetworkManager>
 
     private void Awake()
     {
-        // uid를 구해서 ID로 쓴다
-#if UNITY_EDITOR
-        deviceId = SystemInfo.deviceUniqueIdentifier + "_Editor";   // 에디터용
-#else
-        deviceId = SystemInfo.deviceUniqueIdentifier + "_" + SystemInfo.deviceType;
-#endif
+        // guid를 구해서 ID로 쓴다
+        string guid = Guid.NewGuid().ToString("N");
+        if (guid.Length > 6)
+            guid = guid.Substring(0, 6);
+        deviceId = "Player_" + guid;
     }
 
     // 네트워크 초기화
@@ -85,22 +99,22 @@ public class NetworkManager : Singleton<NetworkManager>
 
         if (session == null)
         {
-            if (kLobbyServerAddr == "")
+            if (lobbyServer.address == "")
             {
                 ModalWindow.Instance.Open("Network Error", "Server address was not given.", AppUtil.Quit);
             }
 
             SessionOption option = new SessionOption();
-            option.sessionReliability = sessionReliability;
+            option.sessionReliability = lobbyServer.sessionReliability;
 
-            session = FunapiSession.Create(kLobbyServerAddr, option);
+            session = FunapiSession.Create(lobbyServer.address, option);
             session.SessionEventCallback += OnSessionEvent;
             session.TransportEventCallback += OnTransportEvent;
             session.TransportOptionCallback += OnTransportOption;
             session.ReceivedMessageCallback += OnReceive;
         }
-        TransportOption transport_opt = OnTransportOption("lobby", kLobbyServerProtocol);
-        session.Connect(kLobbyServerProtocol, kLobbyServerEncoding, kLobbyServerPort, transport_opt);
+        TransportOption transport_opt = OnTransportOption("lobby", lobbyServer.protocol);
+        session.Connect(lobbyServer.protocol, lobbyServer.encoding, lobbyServer.port, transport_opt);
     }
 
     public bool IsReady
@@ -233,11 +247,11 @@ public class NetworkManager : Singleton<NetworkManager>
         if (protocol == TransportProtocol.kTcp)
         {
             TcpTransportOption tcp_option = new TcpTransportOption();
-            tcp_option.Encryption = tcpEncryption;
-            tcp_option.AutoReconnect = autoReconnect;
-            tcp_option.DisableNagle = disableNagle;
+            tcp_option.Encryption = lobbyServer.tcpEncryption;
+            tcp_option.AutoReconnect = lobbyServer.autoReconnect;
+            tcp_option.DisableNagle = lobbyServer.disableNagle;
 
-            if (usePing)
+            if (lobbyServer.usePing)
                 tcp_option.SetPing(1, 20, true);
 
             option = tcp_option;
@@ -245,19 +259,18 @@ public class NetworkManager : Singleton<NetworkManager>
         else if (protocol == TransportProtocol.kUdp)
         {
             option = new TransportOption();
-            option.Encryption = udpEncryption;
+            option.Encryption = lobbyServer.udpEncryption;
         }
         else if (protocol == TransportProtocol.kHttp)
         {
             HttpTransportOption http_option = new HttpTransportOption();
-            http_option.Encryption = httpEncryption;
-            http_option.UseWWW = useWWW;
+            http_option.Encryption = lobbyServer.httpEncryption;
+            http_option.UseWWW = lobbyServer.useWWW;
 
             option = http_option;
         }
 
         option.ConnectionTimeout = 10f;
-        option.SequenceValidation = sequenceValidation;
 
         return option;
     }

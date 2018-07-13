@@ -4,9 +4,6 @@ using UnityEngine;
 
 public class AnnounceBoard : MonoBehaviour
 {
-    private const string kServerAddr = "127.0.0.1";
-    private const ushort kServerPort = 8080;
-
     private void Awake()
     {
         GameObject content = GameObject.FindWithTag("Content");
@@ -18,7 +15,6 @@ public class AnnounceBoard : MonoBehaviour
 
         announce_ = new FunapiAnnouncement();
         announce_.ResultCallback += onAnnouncementResult;
-        announce_.Init(string.Format("http://{0}:{1}", kServerAddr, kServerPort));
     }
 
     private void Update()
@@ -26,9 +22,11 @@ public class AnnounceBoard : MonoBehaviour
         event_.Update(Time.deltaTime);
     }
 
-    public void Show()
+    public void Show(string serverUrl)
     {
         gameObject.SetActive(true);
+
+        announce_.Init(serverUrl);
         announce_.UpdateList(10);
     }
 
