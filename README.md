@@ -3,6 +3,9 @@ Pong Game Client
 
 이 프로젝트는 iFun Engine을 사용하는 Unity3d 사용자를 위한 샘플 게임 클라이언트입니다.
 
+* **Pong** 서버 설치는 [여기](https://github.com/iFunFactory/game-pong-server)를 참고해 주세요.
+
+
 ## 목차
 * [다운로드](#다운로드)
 * [게임 오브젝트](#게임-오브젝트)
@@ -31,7 +34,8 @@ Pong Game Client
 git clone https://github.com/iFunFactory/game-pong.git
 ```
 
-다운로드가 완료되면 유니티를 실행시키고 해당 프로젝트를 불러와 봅시다. 이후 `Assets` 폴더의 루트에 있는 **Main** Scene을 로드하면 됩니다.
+다운로드가 완료되면 zip 파일의 경우는 압축을 해제하고, 유니티 에디터에서 폴더를 열어주세요.
+에디터로 프로젝트가 열리면 `Assets` 폴더의 루트에 있는 **Main** Scene을 로드하면 됩니다.
 
 
 ## 게임 오브젝트
@@ -46,10 +50,16 @@ git clone https://github.com/iFunFactory/game-pong.git
 
 `NetworkManager` : 오브젝트는 Pong 게임 서버와 통신을 담당하는 오브젝트입니다. 이 오브젝트에서는 통신할 서버의 주소, Session Reliability 여부, TCP, UDP, HTTP 옵션 등을 지정할 수 있습니다.
 
-* `Server Addr` : 통신할 게임서버의 ip주소를 입력하는 프로퍼티입니다. 기본값은 *localhost*인 *127.0.0.1*로 설정되어 있습니다.
-* `Session Reliability` : 서버와 disconnect된 후에 재연결 시 동일한 세션으로 통신하도록 하는 옵션입니다. 자세한 내용은 세션 [메뉴얼](https://www.ifunfactory.com/engine/documents/reference/ko/client-plugin.html#session-reliability)을 참고해 주세요.
-* `Sequence Validation` : 메시지에 Sequence Number를 붙여서 메시지의 유효성을 보장해줍니다. 자세한 내용은 Transport 옵션 [메뉴얼](https://www.ifunfactory.com/engine/documents/reference/ko/client-plugin.html#transport)을 참고해 주세요.
+* **Announcement Server** : 공지사항을 수신할 서버의 정보를 설정합니다.
+	- `Url` : 서버의 웹 서비스 URL을 입력합니다. (`Announcements/`는 생략합니다)
 
+* **Lobby Server** : 접속할 로비 서버 정보를 설정합니다.
+	- `Address` : 서버의 ip주소를 입력하는 프로퍼티입니다. 기본값은 *localhost*인 *127.0.0.1*로 설정되어 있습니다.
+	- `Port` : 서버의 포트 정보를 입력합니다.
+	- `Protocol` : 서버와 통신할 프로토콜을 선택합니다. (본 프로젝트는 TCP만 지원합니다)
+	- `Encoding` : 서버와 메시지를 주고 받을 때 사용할 인코딩 방식을 선택합니다. 
+	- `Session Reliability` : 서버와 disconnect된 후에 재연결 시 동일한 세션으로 통신하도록 하는 옵션입니다. 자세한 내용은 세션 [메뉴얼](https://www.ifunfactory.com/engine/documents/reference/ko/client-plugin.html#session-reliability)을 참고해 주세요.
+	
 #### TCP Option
 
 TCP Transport 옵션입니다. 자세한 내용은 TcpTransport 옵션 [메뉴얼](https://www.ifunfactory.com/engine/documents/reference/ko/client-plugin.html#transport)을 참고해 주세요.
@@ -72,36 +82,25 @@ HTTP Transport 옵션입니다. 자세한 내용은 HttpTransport 옵션 [메뉴
 * `Use WWW` : UnityEngine.WWW 클래스 사용 여부를 결정하는 옵션입니다.
 
 
-## 테스트
+## 플레이 실행
 
-**Main** Scene을 로드하여 Unity Editor로 실행하거나 기기에 넣어서 실행하면 됩니다.
+**Main** Scene을 로드하여 Unity Editor에서 바로 실행하거나 컴파일 후 기기에 설치해서 실행해도 됩니다.
+
+### 로그인
+
+첫 화면에서 **[게스트 로그인]**을 선택하면 서버와 통신해서 로그인을 수행하고, 플레이 메뉴 화면으로 진행합니다.
 
 ### 싱글 플레이
 
-로그인 메뉴에서 **[싱글플레이]**를 선택한 후 **[게임시작]** 버튼을 누르면 싱글 플레이로 게임이 진행됩니다.
-
-(로그인 메뉴에서 **[싱글플레이]**를 선택하면 **[대전시작]** 버튼은 비활성화됩니다.)
+플레이 메뉴 화면에서 **[혼자하기]**를 선택하면 싱글 플레이 모드로 게임을 시작합니다.
 
 ### 멀티 플레이
 
-싱글플레이는 별도의 서버 없이도 테스트가 가능하지만, 멀티플레이를 통한 대전은 pong game server가 필요합니다. pong game server 설치 및 설정에 대한 내용은 [여기](https://github.com/iFunFactory/game-pong-server)를 참고해주세요.
+플레이 메뉴 화면에서 **[같이하기]**를 선택하면, 대전 상대와 매칭을 기다리기 시작합니다.
+또 하나의 클라이언트가 게임을 시작하고 매칭에 성공하면, 대전 상대와 대결하는 2인 플레이가 시작됩니다.
 
-pong server 설정이 완료되었다면, 이제 pong-client에서 접속할 서버 주소 및 Port 번호를 설정해주어야 합니다. 해당 값은 *Scripts/NetworkManager.cs* 파일 상단의 **kServerAddr**, **kServerTcpPort**, **kServerUdpPort** 을 수정하면 됩니다.
+pong game server 설치 및 설정에 대한 내용은 [여기](https://github.com/iFunFactory/game-pong-server)를 참고해주세요.
 
-```csharp
-// 서버 주소
-public string kServerAddr = "127.0.0.1";
-
-// 서버 포트
-const ushort kServerTcpPort = 8012;
-const ushort kServerUdpPort = 8013;
-const ushort kServerHttpPort = 8018;
-```
-
-
-테스트는 로그인 메뉴에서 **[게스트 로그인]**혹은 **[페이스북 로그인]**을 통해 로그인이 성공적으로 이루어진 후 **[대전시작]** 버튼을 누르면 매칭된 상대와 대전하게 됩니다.
-
-(로그인되면 **[게임시작]** 버튼이 비활성화되어 싱글 플레이는 불가능합니다.)
 
 #### [로그인]
 
@@ -113,12 +112,6 @@ const ushort kServerHttpPort = 8018;
 공지사항을 확인하려면 공지사항 서버를 별도로 띄워야 합니다. 게임서버가 공지사항 서버의 기능을 하지는
 않습니다. 공지사항 서버 설정에 대한 자세한 설명은 [여기](https://www.ifunfactory.com/engine/documents/reference/ko/announcer.html)를 참고해 주세요.
 
-공지사항 서버를 띄웠다면 *AnnounceBoard.cs* 파일에서 공지사항 서버의 주소와 Port 번호를 수정하면 됩니다.
-
-```csharp
-const string kServerAddr = "127.0.0.1";
-const UInt16 kServerPort = 8080;
-```
 
 #### [순위]
 
