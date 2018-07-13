@@ -11,14 +11,12 @@ public class Menu : MonoBehaviour
 {
     public AnnounceBoard announceBoard;
 
-    private Button btnStart = null;
-    private Button btnMatching = null;
-    private Button btnCancelMatching = null;
-    private Button btnLeaderboard = null;
-    private Text matchRecord;
     private GameObject login;
     private GameObject main;
     private GameObject recordBoard;
+    private Button btnMatching = null;
+    private Button btnCancelMatching = null;
+    private Text matchRecord;
 
 
     private void Awake()
@@ -27,39 +25,11 @@ public class Menu : MonoBehaviour
         main = transform.Find("Main").gameObject;
         recordBoard = transform.parent.Find("RecordBoard").gameObject;
 
-        btnStart = main.transform.Find("StartGame").GetComponent<Button>();
-        btnMatching = main.transform.Find("StartMatching").GetComponent<Button>();
+        btnMatching = main.transform.Find("MultiGame").GetComponent<Button>();
         btnCancelMatching = main.transform.Find("CancelMatching").GetComponent<Button>();
-        btnLeaderboard = main.transform.Find("LeaderBoard").GetComponent<Button>();
         matchRecord = main.transform.Find("MatchRecord").GetComponent<Text>();
 
         OnLoginMenu();
-    }
-
-    /// <summary>
-    /// login menu's button events to move main menu
-    /// </summary>
-    public void OnSinglePlayClicked()
-    {
-        GameLogic.Instance.SinglePlayLogin();
-    }
-
-    public void OnGuestLoggedInClicked()
-    {
-        GameLogic.Instance.GuestLogin();
-    }
-
-    public void OnFBLoggedInClicked()
-    {
-        GameLogic.Instance.FBLogin();
-    }
-
-    public void WaitMenu()
-    {
-        foreach (var button in login.GetComponentsInChildren<Button>())
-        {
-            button.interactable = false;
-        }
     }
 
     public void OnLoginMenu()
@@ -69,31 +39,17 @@ public class Menu : MonoBehaviour
         recordBoard.SetActive(false);
     }
 
-    public void OnSinglePlayMainMenu()
-    {
-        OnDefaultMainMenu();
-        btnStart.interactable = true;
-        btnMatching.interactable = false;
-        btnLeaderboard.interactable = false;
-    }
-
-    public void OnMultiplayMainMenu()
-    {
-        OnDefaultMainMenu();
-        btnStart.interactable = false;
-        btnMatching.interactable = true;
-        btnLeaderboard.interactable = true;
-    }
-
-    private void OnDefaultMainMenu()
+    public void OnMainMenu()
     {
         login.SetActive(false);
         main.SetActive(true);
+        btnMatching.interactable = true;
         btnCancelMatching.gameObject.SetActive(false);
     }
 
+
     /// <summary>
-    /// main menu's button events
+    /// login menu's button events to move main menu
     /// </summary>
     public void OnAnnounceClicked()
     {
@@ -108,24 +64,38 @@ public class Menu : MonoBehaviour
         announceBoard.Show(setting.url);
     }
 
-    public void OnLeaderBoardClicked()
+    public void OnGuestLoggedInClicked()
     {
-        gameObject.SetActive(false);
-        recordBoard.SetActive(true);
-        GameLogic.Instance.RequestRankList();
+        GameLogic.Instance.GuestLogin();
     }
 
-    public void OnStartClicked()
+    public void OnFBLoggedInClicked()
+    {
+        GameLogic.Instance.FBLogin();
+    }
+
+
+    /// <summary>
+    /// main menu's button events
+    /// </summary>
+    public void OnSingleGameClicked()
     {
         GameLogic.Instance.StartSingleGamePlay();
     }
 
-    public void OnMatchingClicked()
+    public void OnMultiGameClicked()
     {
         btnMatching.interactable = false;
         btnCancelMatching.gameObject.SetActive(true);
 
         GameLogic.Instance.RequestMatching();
+    }
+
+    public void OnRankingClicked()
+    {
+        gameObject.SetActive(false);
+        recordBoard.SetActive(true);
+        GameLogic.Instance.RequestRankList();
     }
 
     public void OnCancelMatchingClicked()
@@ -136,6 +106,16 @@ public class Menu : MonoBehaviour
     public void OnQuitClicked()
     {
         AppUtil.Quit();
+    }
+
+
+    ///
+    public void WaitMenu()
+    {
+        foreach (var button in login.GetComponentsInChildren<Button>())
+        {
+            button.interactable = false;
+        }
     }
 
     public void SetActive(bool enable)

@@ -122,7 +122,7 @@ public class NetworkManager : Singleton<NetworkManager>
         get { return state == STATE.READY; }
     }
 
-    public void Stop()
+    void OnApplicationQuit()
     {
         if (session != null)
             session.Stop();
@@ -156,7 +156,8 @@ public class NetworkManager : Singleton<NetworkManager>
     public void Send(string messageType, Dictionary<string, object> body,
                      TransportProtocol protocol = TransportProtocol.kDefault)
     {
-        if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.SINGLE) return;
+        if (GameLogic.Instance.isSinglePlay)
+            return;
 
         session.SendMessage(messageType, body, protocol);
     }
@@ -164,7 +165,8 @@ public class NetworkManager : Singleton<NetworkManager>
     public void Send(string messageType, FunMessage body,
                      TransportProtocol protocol = TransportProtocol.kDefault)
     {
-        if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.SINGLE) return;
+        if (GameLogic.Instance.isSinglePlay)
+            return;
 
         session.SendMessage(messageType, body, protocol);
     }

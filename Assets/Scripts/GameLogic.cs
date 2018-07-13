@@ -19,20 +19,24 @@ public class GameLogic : Singleton<GameLogic>
     public Ball ball;
     public float ballSpeed = 1.5f;
 
+
+    public LOGIN_TYPE loginType
+    {
+        get; private set;
+    }
+
+    public bool isSinglePlay
+    {
+        get { return bSinglePlay; }
+    }
+
+
     // 메뉴 화면
     public void ShowMenu()
     {
         state = GAME_STATE.MENU;
         menu.SetActive(true);
-
-        if (loginType == LOGIN_TYPE.SINGLE)
-        {
-            menu.OnSinglePlayMainMenu();
-        }
-        else
-        {
-            menu.OnMultiplayMainMenu();
-        }
+        menu.OnMainMenu();
 
         gameRoot.SetActive(false);
         setStatusText("");
@@ -41,12 +45,6 @@ public class GameLogic : Singleton<GameLogic>
     public void WaitMenu()
     {
         menu.WaitMenu();
-    }
-
-    public void SinglePlayLogin()
-    {
-        loginType = LOGIN_TYPE.SINGLE;
-        ShowMenu();
     }
 
     public void GuestLogin()
@@ -76,7 +74,9 @@ public class GameLogic : Singleton<GameLogic>
 
     public void StartSingleGamePlay()
     {
-        setReadyToPlay();
+        bSinglePlay = true;
+        setReadyToPlay(false);
+
         StartPlay();
     }
 
@@ -88,14 +88,14 @@ public class GameLogic : Singleton<GameLogic>
 
         setStatusText("");
 
-        if (loginType == LOGIN_TYPE.SINGLE || bRoomMaster)
+        if (bSinglePlay || bRoomMaster)
         {
             // 공의 첫 움직임
             float vx = (ballSpeed + UnityEngine.Random.value) * (UnityEngine.Random.value < 0.5f ? -1 : 1);
             float vy = (ballSpeed + UnityEngine.Random.value) * (UnityEngine.Random.value < 0.5f ? -1 : 1);
             ball.SetProperties(0, 0, vx, vy);
 
-            if (loginType != LOGIN_TYPE.SINGLE)
+            if (!bSinglePlay)
                 ball.SendProperties();
         }
     }
@@ -103,6 +103,8 @@ public class GameLogic : Singleton<GameLogic>
     public void RequestMatching()
     {
         state = GAME_STATE.MATCHING;
+        bSinglePlay = false;
+
         setStatusText("매칭 중입니다");
 
         // 매치 요청
@@ -120,7 +122,7 @@ public class GameLogic : Singleton<GameLogic>
         if (state != GAME_STATE.MATCHING)
             return;
 
-        setReadyToPlay();
+        setReadyToPlay(true);
 
         NetworkManager.Instance.Send("ready");
     }
@@ -144,7 +146,7 @@ public class GameLogic : Singleton<GameLogic>
                 break;
 
             case GAME_STATE.GAME:
-                if (loginType != LOGIN_TYPE.SINGLE)
+                if (!bSinglePlay)
                 {
                     // 승패 처리, 패배시에만 보고함
                     // 패배 판정은 나의 'bar'보다 공이 아래쪽으로 많이 지나간 경우
@@ -181,20 +183,6 @@ public class GameLogic : Singleton<GameLogic>
                 }
                 break;
         }
-    }
-
-    private void OnApplicationPause(bool isPaused)
-    {
-        if (loginType == LOGIN_TYPE.SINGLE && isPaused)
-        {
-            AppUtil.Quit();
-            return;
-        }
-    }
-
-    private void OnApplicationQuit()
-    {
-        NetworkManager.Instance.Stop();
     }
 
     // 게임 중 정보 업데이트
@@ -328,7 +316,7 @@ public class GameLogic : Singleton<GameLogic>
         menu.SetRecordBoard(encoding, body);
     }
 
-    private void setReadyToPlay()
+    private void setReadyToPlay(bool isMultiplay)
     {
         state = GAME_STATE.READY;
 
@@ -336,12 +324,9 @@ public class GameLogic : Singleton<GameLogic>
         gameRoot.SetActive(true);
 
         // 위치 초기화
-
-        var isMultiplay_ = isMultiplay();
-
-        myBar.Ready(isMultiplay_);
-        oppBar.Ready(isMultiplay_);
-        ball.Reset(isMultiplay_);
+        myBar.Ready(isMultiplay);
+        oppBar.Ready(isMultiplay);
+        ball.Reset(isMultiplay);
 
         // ready
         setStatusText("준비!");
@@ -352,13 +337,10 @@ public class GameLogic : Singleton<GameLogic>
         textLabel.text = text;
     }
 
-    private bool isMultiplay()
+    public enum LOGIN_TYPE
     {
-        if (loginType == LOGIN_TYPE.SINGLE)
-        {
-            return false;
-        }
-        return true;
+        MULTI_GUEST,
+        MULTI_FACEBOOK
     }
 
     private enum GAME_STATE
@@ -373,20 +355,14 @@ public class GameLogic : Singleton<GameLogic>
         WAIT        // wait response for only one request transmission
     }
 
-    private GAME_STATE state = GAME_STATE.INIT;
 
-    public enum LOGIN_TYPE
-    {
-        SINGLE,
-        MULTI_GUEST,
-        MULTI_FACEBOOK
-    }
+    GAME_STATE state = GAME_STATE.INIT;
+    bool bRoomMaster = false;
+    bool bSinglePlay = false;
 
-    public LOGIN_TYPE loginType { get; private set; }
-    private bool bRoomMaster = false;
-    private const float kOutOfBounds = 60f;
-    private float lastBarTimeSeq = 0;
-    private int winCount_;
-    private int loseCount_;
-    private int curRecord_;
+    const float kOutOfBounds = 60f;
+    float lastBarTimeSeq = 0;
+    int winCount_;
+    int loseCount_;
+    int curRecord_;
 }
