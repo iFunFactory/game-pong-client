@@ -113,15 +113,15 @@ public class GameLogic : Singleton<GameLogic>
     public void OnMatch(bool bMaster)
     {
         bRoomMaster = bMaster;
-        setReadyToPlay();
-
-        // 준비 완료 메세지 송신
-        Invoke("sendReady", 3);
     }
 
-    // 준비 완료 메세지 송신
-    private void sendReady()
+    public void OnReady()
     {
+        if (state != GAME_STATE.MATCHING)
+            return;
+
+        setReadyToPlay();
+
         NetworkManager.Instance.Send("ready");
     }
 
@@ -155,7 +155,6 @@ public class GameLogic : Singleton<GameLogic>
                             Dictionary<string, object> message = new Dictionary<string, object>();
                             message["result"] = "lose";
                             NetworkManager.Instance.Send("result", message);
-                            state = GAME_STATE.WAIT;
                         }
                         else
                         {
@@ -165,6 +164,8 @@ public class GameLogic : Singleton<GameLogic>
                             FunMessage fun_msg = FunapiMessage.CreateFunMessage(msg, MessageType.game_result);
                             NetworkManager.Instance.Send("result", fun_msg);
                         }
+
+                        state = GAME_STATE.WAIT;
                     }
                 }
                 else
@@ -372,7 +373,7 @@ public class GameLogic : Singleton<GameLogic>
         WAIT        // wait response for only one request transmission
     }
 
-    private GAME_STATE state;
+    private GAME_STATE state = GAME_STATE.INIT;
 
     public enum LOGIN_TYPE
     {

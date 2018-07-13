@@ -96,11 +96,11 @@ public class NetworkManager : Singleton<NetworkManager>
             session = FunapiSession.Create(kLobbyServerAddr, option);
             session.SessionEventCallback += OnSessionEvent;
             session.TransportEventCallback += OnTransportEvent;
-	    session.TransportOptionCallback += OnTransportOption;
+            session.TransportOptionCallback += OnTransportOption;
             session.ReceivedMessageCallback += OnReceive;
         }
         TransportOption transport_opt = OnTransportOption("lobby", kLobbyServerProtocol);
-	    session.Connect(kLobbyServerProtocol, kLobbyServerEncoding, kLobbyServerPort, transport_opt);
+        session.Connect(kLobbyServerProtocol, kLobbyServerEncoding, kLobbyServerPort, transport_opt);
     }
 
     public bool IsReady
@@ -140,7 +140,7 @@ public class NetworkManager : Singleton<NetworkManager>
 
     // Json 버전 Send
     public void Send(string messageType, Dictionary<string, object> body,
-                      TransportProtocol protocol = TransportProtocol.kDefault)
+                     TransportProtocol protocol = TransportProtocol.kDefault)
     {
         if (GameLogic.Instance.loginType == GameLogic.LOGIN_TYPE.SINGLE) return;
 
@@ -190,6 +190,10 @@ public class NetworkManager : Singleton<NetworkManager>
             case SessionEventType.kClosed:
                 state = STATE.CLOSED;
                 break;
+
+            case SessionEventType.kRedirectSucceeded:
+                GameLogic.Instance.OnReady();
+                break;
         }
     }
 
@@ -202,21 +206,21 @@ public class NetworkManager : Singleton<NetworkManager>
 
             switch (error)
             {
-            case TransportError.Type.kDisconnected:
-                // 연결이 끊기면 재연결
-                session.Connect(protocol);
-                break;
+                case TransportError.Type.kDisconnected:
+                    // 연결이 끊기면 재연결
+                    session.Connect(protocol);
+                    break;
 
-            case TransportError.Type.kStartingFailed:
-            case TransportError.Type.kConnectionTimeout:
-                // 연결에 실패함
-                ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
-                break;
+                case TransportError.Type.kStartingFailed:
+                case TransportError.Type.kConnectionTimeout:
+                    // 연결에 실패함
+                    ModalWindow.Instance.Open("연결 실패", "서버 연결에 실패했습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
+                    break;
 
-            default:
-                if (error != TransportError.Type.kNone)
-                    ModalWindow.Instance.Open("연결 끊김", "서버와의 연결이 끊겼습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
-                break;
+                default:
+                    if (error != TransportError.Type.kNone)
+                        ModalWindow.Instance.Open("연결 끊김", "서버와의 연결이 끊겼습니다.\n게임을 다시 시작해 주세요.\n" + type.ToString(), AppUtil.Quit);
+                    break;
             }
         }
     }
