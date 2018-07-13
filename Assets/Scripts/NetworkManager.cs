@@ -15,7 +15,7 @@ public class NetworkManager : Singleton<NetworkManager>
     {
         // 샘플용 공지 서버 주소입니다.
         // 공지 서버를 따로 구성했다면 이 주소를 변경해 주세요.
-        public string url = "https://example.ifunfactory.com";
+        public string url = "http://example.ifunfactory.com";
     }
 
     [System.Serializable]
