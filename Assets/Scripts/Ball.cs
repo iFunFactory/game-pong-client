@@ -58,6 +58,10 @@ public class Ball : MonoBehaviour
     // collision detection, 충돌이 일어났을 때의 위치와 방향을 동기화
     void OnCollisionEnter2D (Collision2D coll)
     {
+        //ball min/max velocity 제한
+        float y = (Mathf.Abs(rigidBody.velocity.y) < minVY) ? Mathf.Sign(rigidBody.velocity.y) * minVY : rigidBody.velocity.y;
+        rigidBody.velocity = new Vector2(Vector2.ClampMagnitude(rigidBody.velocity, maxV).x, y);
+
         if (!isMultiPlay)
             return;
 
@@ -69,4 +73,6 @@ public class Ball : MonoBehaviour
 
     bool isMultiPlay = false;
     Rigidbody2D rigidBody;
+    float maxV = 40f;
+    float minVY = 1f;
 }
