@@ -103,18 +103,22 @@ public class Menu : MonoBehaviour
         GameLogic.Instance.RequestCancelMatching();
     }
 
+    public void OnBackClicked()
+    {
+        GameLogic.Instance.BackToLoginMenu();
+    }
+
     public void OnQuitClicked()
     {
         AppUtil.Quit();
     }
 
-
     ///
-    public void WaitMenu()
+    public void SetLoginMenuButtonsInteractable(bool interactable)
     {
         foreach (var button in login.GetComponentsInChildren<Button>())
         {
-            button.interactable = false;
+            button.interactable = interactable;
         }
     }
 

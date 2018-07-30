@@ -74,6 +74,7 @@ public class NetworkManager : Singleton<NetworkManager>
         START,      // session is started (not initialized, not connected, not logined)
         INITED,     // session initialized
         READY,      // session is ready
+        STOPPED,    // session stopped
         CLOSED,     // session closed
         ERROR,      // error occurred
     }
@@ -117,15 +118,27 @@ public class NetworkManager : Singleton<NetworkManager>
         session.Connect(lobbyServer.protocol, lobbyServer.encoding, lobbyServer.port, transport_opt);
     }
 
+    public void Stop()
+    {
+        if(session != null)
+        {
+            session.Stop();
+        }
+    }
+
     public bool IsReady
     {
         get { return state == STATE.READY; }
     }
 
+    public bool Stopped
+    {
+        get { return state == STATE.STOPPED; }
+    }
+
     void OnApplicationQuit()
     {
-        if (session != null)
-            session.Stop();
+        Stop();
     }
 
     public FunEncoding GetEncoding(TransportProtocol protocol = TransportProtocol.kDefault)
@@ -201,6 +214,12 @@ public class NetworkManager : Singleton<NetworkManager>
                 {
                     FacebookManager.Instance.login();
                 }
+                break;
+
+            case SessionEventType.kStopped:
+                FunapiSession.Destroy(session);
+                session = null;
+                state = STATE.STOPPED;
                 break;
 
             case SessionEventType.kClosed:

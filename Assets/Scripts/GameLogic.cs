@@ -30,7 +30,6 @@ public class GameLogic : Singleton<GameLogic>
         get { return bSinglePlay; }
     }
 
-
     // 메뉴 화면
     public void ShowMenu()
     {
@@ -42,9 +41,17 @@ public class GameLogic : Singleton<GameLogic>
         setStatusText("");
     }
 
+    public void ShowLoginMenu()
+    {
+        menu.OnLoginMenu();
+        menu.SetLoginMenuButtonsInteractable(true);
+
+        state = GAME_STATE.INIT;
+    }
+
     public void WaitMenu()
     {
-        menu.WaitMenu();
+        menu.SetLoginMenuButtonsInteractable(false);
     }
 
     public void GuestLogin()
@@ -57,6 +64,12 @@ public class GameLogic : Singleton<GameLogic>
     {
         loginType = LOGIN_TYPE.MULTI_FACEBOOK;
         NetworkManager.Instance.Connect();
+    }
+
+    public void BackToLoginMenu()
+    {
+        state = GAME_STATE.WAIT_BACK;
+        NetworkManager.Instance.Stop();
     }
 
     public void SetMatchRecord(int winCount, int loseCount, int curRecord)
@@ -180,6 +193,13 @@ public class GameLogic : Singleton<GameLogic>
 
                         ModalWindow.Instance.Open("PONG", "게임종료!", ShowMenu);
                     }
+                }
+                break;
+
+            case GAME_STATE.WAIT_BACK:
+                if(NetworkManager.Instance.Stopped)
+                {
+                    ShowLoginMenu();
                 }
                 break;
         }
@@ -352,7 +372,8 @@ public class GameLogic : Singleton<GameLogic>
         GAME,       // playing pong
         END,        // end play
         RESULT,     // result
-        WAIT        // wait response for only one request transmission
+        WAIT,       // wait response for only one request transmission
+        WAIT_BACK   // wait back to login menu
     }
 
 
