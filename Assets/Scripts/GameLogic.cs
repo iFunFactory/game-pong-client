@@ -153,8 +153,19 @@ public class GameLogic : Singleton<GameLogic>
             case GAME_STATE.INIT:
                 if (NetworkManager.Instance.IsReady)
                 {
+                    // 프로필 이미지 띄우기 위해 enable
+                    if(loginType == LOGIN_TYPE.MULTI_FACEBOOK)
+                    {
+                        FacebookManager.Instance.enabled = true;
+                    }
+
                     // 세션 생성, 로그인 완료, 메뉴로
                     ShowMenu();
+                }
+                else if(NetworkManager.Instance.Stopped)
+                {
+                    //wait_menu 호출 된 후 stop 됐을 경우 위해
+                    menu.SetLoginMenuButtonsInteractable(true);
                 }
                 break;
 
@@ -199,6 +210,11 @@ public class GameLogic : Singleton<GameLogic>
             case GAME_STATE.WAIT_BACK:
                 if(NetworkManager.Instance.Stopped)
                 {
+                    if(loginType == LOGIN_TYPE.MULTI_FACEBOOK)
+                    {
+                        FacebookManager.Instance.logout();
+                        FacebookManager.Instance.enabled = false;
+                    }
                     ShowLoginMenu();
                 }
                 break;

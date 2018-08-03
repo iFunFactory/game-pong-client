@@ -29,15 +29,30 @@ public class FacebookManager : Singleton<FacebookManager>
 
     public void login()
     {
-        if (logged_in_) return;
+        if (facebook_.IsLoggedIn)
+        {
+            RequestFBLogin();
+        }
+        else
+        {
+            facebook_.LogInWithRead(new List<string>() {
+                    "public_profile", "email", "user_friends"});
+        }
+    }
 
-        facebook_.LogInWithPublish(new List<string>() {
-                "public_profile", "email", "user_friends", "publish_actions"});
+    public void logout()
+    {
+        if (!facebook_.IsLoggedIn)
+        {
+            return;
+        }
+
+        facebook_.Logout();
     }
 
     private void OnGUI()
     {
-        GUI.enabled = logged_in_;
+        GUI.enabled = facebook_.IsLoggedIn;
 
         if (tex_ != null)
         {
@@ -51,7 +66,12 @@ public class FacebookManager : Singleton<FacebookManager>
         switch (result)
         {
             case SNResultCode.kLoggedIn:
-                logged_in_ = true;
+                RequestFBLogin();
+                break;
+
+            case SNResultCode.kLoginFailed:
+                Debug.Log("Social Network Login Failed.");
+                NetworkManager.Instance.Stop();
                 break;
 
             case SNResultCode.kError:
@@ -60,9 +80,25 @@ public class FacebookManager : Singleton<FacebookManager>
         }
     }
 
-    private FacebookConnector facebook_ = null;
+    private void RequestFBLogin()
+    {
+        var token = Facebook.Unity.AccessToken.CurrentAccessToken;
 
-    private bool logged_in_ = false;
+        if (NetworkManager.Instance.GetEncoding() == FunEncoding.kJson)
+        {
+            Dictionary<string, object> body = new Dictionary<string, object>();
+            body["id"] = token.UserId;
+            body["access_token"] = token.TokenString;
+            body["type"] = "fb";
+            NetworkManager.Instance.Send("login", body);
+        }
+        else
+        {
+            // TODO(dkmoon): Protobuf
+        }
+    }
+
+    private FacebookConnector facebook_ = null;
     private Texture2D tex_ = null;
     private string name_ = string.Empty;
 }
