@@ -169,18 +169,12 @@ public class NetworkManager : Singleton<NetworkManager>
     public void Send(string messageType, Dictionary<string, object> body,
                      TransportProtocol protocol = TransportProtocol.kDefault)
     {
-        if (GameLogic.Instance.isSinglePlay)
-            return;
-
         session.SendMessage(messageType, body, protocol);
     }
 
     public void Send(string messageType, FunMessage body,
                      TransportProtocol protocol = TransportProtocol.kDefault)
     {
-        if (GameLogic.Instance.isSinglePlay)
-            return;
-
         session.SendMessage(messageType, body, protocol);
     }
 
@@ -310,6 +304,9 @@ public class NetworkManager : Singleton<NetworkManager>
                     int winCount = 0;
                     int loseCount = 0;
                     int curRecord = 0;
+                    int singleWinCount = 0;
+                    int singleLoseCount = 0;
+                    int singleCurRecord = 0;
 
                     if (encoding == FunEncoding.kJson)
                     {
@@ -321,6 +318,9 @@ public class NetworkManager : Singleton<NetworkManager>
                             Int32.TryParse(message["winCount"].ToString(), out winCount);
                             Int32.TryParse(message["loseCount"].ToString(), out loseCount);
                             Int32.TryParse(message["curRecord"].ToString(), out curRecord);
+                            Int32.TryParse(message["singleWinCount"].ToString(), out singleWinCount);
+                            Int32.TryParse(message["singleLoseCount"].ToString(), out singleLoseCount);
+                            Int32.TryParse(message["singleCurRecord"].ToString(), out singleCurRecord);
                         }
                         else
                         {
@@ -343,6 +343,9 @@ public class NetworkManager : Singleton<NetworkManager>
                             winCount = message.win_count;
                             loseCount = message.lose_count;
                             curRecord = message.cur_record;
+                            singleWinCount = message.win_count_single;
+                            singleLoseCount = message.lose_count_single;
+                            singleCurRecord = message.cur_record_single;
                         }
                         else
                         {
@@ -353,7 +356,8 @@ public class NetworkManager : Singleton<NetworkManager>
                     if (result == "ok")
                     {
                         state = STATE.READY;
-                        GameLogic.Instance.SetMatchRecord(winCount, loseCount, curRecord);
+                        GameLogic.Instance.SetMatchRecord(
+                            winCount, loseCount, curRecord, singleWinCount, singleLoseCount, singleCurRecord);
                     }
                     else
                     {

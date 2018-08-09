@@ -72,17 +72,32 @@ public class GameLogic : Singleton<GameLogic>
         NetworkManager.Instance.Stop();
     }
 
-    public void SetMatchRecord(int winCount, int loseCount, int curRecord)
+    public void SetMatchRecord(
+        int winCount, int loseCount, int curRecord,
+        int winCount_s, int loseCount_s, int curRecord_s)
     {
+        singleWinCount_ = winCount_s;
+        singleLoseCount_ = loseCount_s;
+        singleCurRecord_ = curRecord_s;
+
         winCount_ = winCount;
         loseCount_ = loseCount;
         curRecord_ = curRecord;
-        menu.SetMatchRecord(winCount, loseCount, curRecord);
+
+        menu.SetSingleMatchRecord(winCount_s, loseCount_s, curRecord_s);
+        menu.SetMultiMatchRecord(winCount, loseCount, curRecord);
     }
 
-    public void RequestRankList()
+    public void RequestRankList(bool single = false)
     {
-        NetworkManager.Instance.Send("ranklist");
+        if(single)
+        {
+            NetworkManager.Instance.Send("ranklist_single");
+        }
+        else
+        {
+            NetworkManager.Instance.Send("ranklist");
+        }
     }
 
     public void StartSingleGamePlay()
@@ -196,11 +211,47 @@ public class GameLogic : Singleton<GameLogic>
                 }
                 else
                 {
-                    if (ball.transform.localPosition.y > oppBar.transform.localPosition.y + kOutOfBounds ||
-                        ball.transform.localPosition.y < myBar.transform.localPosition.y - kOutOfBounds)
+                    bool game_over = false;
+                    bool win = false;
+                    if (ball.transform.localPosition.y > oppBar.transform.localPosition.y + kOutOfBounds)
                     {
+                        game_over = true;
+                        win = true;
+
+                    }
+                    else if(ball.transform.localPosition.y < myBar.transform.localPosition.y - kOutOfBounds)
+                    {
+                        game_over = true;
+                    }
+
+                    if(game_over)
+                    {
+                        if (NetworkManager.Instance.GetEncoding() == Fun.FunEncoding.kJson)
+                        {
+                            Dictionary<string, object> message = new Dictionary<string, object>();
+                            message["result"] = win? "win" : "lose";
+                            NetworkManager.Instance.Send("singleresult", message);
+                        }
+                        else
+                        {
+                            LobbySingleModeResultMessage msg = new LobbySingleModeResultMessage();
+                            msg.result = win ? "win" : "lose";
+
+                            FunMessage fun_msg = FunapiMessage.CreateFunMessage(msg, MessageType.lobby_single_result);
+                            NetworkManager.Instance.Send("singleresult", fun_msg);
+                        }
+
                         state = GAME_STATE.RESULT;
                         gameRoot.SetActive(false);
+
+                        if(win)
+                        {
+                            menu.SetSingleMatchRecord(++singleWinCount_, singleLoseCount_, ++singleCurRecord_);
+                        }
+                        else
+                        {
+                            menu.SetSingleMatchRecord(singleWinCount_, ++singleLoseCount_, singleCurRecord_ = 0);
+                        }
 
                         ModalWindow.Instance.Open("PONG", "게임종료!", ShowMenu);
                     }
@@ -336,12 +387,12 @@ public class GameLogic : Singleton<GameLogic>
 
         if (win)
         {
-            SetMatchRecord(winCount_ + 1, loseCount_, curRecord_ + 1);
+            menu.SetMultiMatchRecord(++winCount_, loseCount_, ++curRecord_);
             ModalWindow.Instance.Open("결과", "승리했습니다!", ShowMenu);
         }
         else
         {
-            SetMatchRecord(winCount_, loseCount_ + 1, 0);
+            menu.SetMultiMatchRecord(winCount_, ++loseCount_, curRecord_ = 0);
             ModalWindow.Instance.Open("결과", "패배했습니다!", ShowMenu);
         }
 
@@ -402,4 +453,7 @@ public class GameLogic : Singleton<GameLogic>
     int winCount_;
     int loseCount_;
     int curRecord_;
+    int singleWinCount_;
+    int singleLoseCount_;
+    int singleCurRecord_;
 }

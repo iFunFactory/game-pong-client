@@ -16,7 +16,10 @@ public class Menu : MonoBehaviour
     private GameObject recordBoard;
     private Button btnMatching = null;
     private Button btnCancelMatching = null;
-    private Text matchRecord;
+    private Text multiMatchRecord;
+    private Text singleMatchRecord;
+    private Toggle toggleSingle;
+    private Toggle toggleMulti;
 
 
     private void Awake()
@@ -25,9 +28,13 @@ public class Menu : MonoBehaviour
         main = transform.Find("Main").gameObject;
         recordBoard = transform.parent.Find("RecordBoard").gameObject;
 
+        toggleSingle = recordBoard.transform.Find("Single").GetComponent<Toggle>();
+        toggleMulti = recordBoard.transform.Find("Multi").GetComponent<Toggle>();
+
         btnMatching = main.transform.Find("MultiGame").GetComponent<Button>();
         btnCancelMatching = main.transform.Find("CancelMatching").GetComponent<Button>();
-        matchRecord = main.transform.Find("MatchRecord").GetComponent<Text>();
+        multiMatchRecord = main.transform.Find("MultiMatchRecord").GetComponent<Text>();
+        singleMatchRecord = main.transform.Find("SingleMatchRecord").GetComponent<Text>();
 
         OnLoginMenu();
     }
@@ -95,6 +102,31 @@ public class Menu : MonoBehaviour
     {
         gameObject.SetActive(false);
         recordBoard.SetActive(true);
+
+        toggleSingle.Select();
+        ResetRecordBoard();
+        GameLogic.Instance.RequestRankList(true);
+    }
+
+    public void OnSingleRankingClicked()
+    {
+        if(!toggleSingle.isOn)
+        {
+            return;
+        }
+
+        ResetRecordBoard();
+        GameLogic.Instance.RequestRankList(true);
+    }
+
+    public void OnMultiRankingClicked()
+    {
+        if(!toggleMulti.isOn)
+        {
+            return;
+        }
+
+        ResetRecordBoard();
         GameLogic.Instance.RequestRankList();
     }
 
@@ -127,10 +159,30 @@ public class Menu : MonoBehaviour
         gameObject.SetActive(enable);
     }
 
-    public void SetMatchRecord(int winCount, int loseCount, int curRecord)
+    public void SetMultiMatchRecord(int winCount, int loseCount, int curRecord)
     {
-        var recordText = string.Format("총 전적 : {0}승 {1}패 | 현재 {2} 연승", winCount, loseCount, curRecord);
-        matchRecord.text = recordText;
+        var recordText = string.Format("같이하기 : {0}승 {1}패 | 현재 {2} 연승", winCount, loseCount, curRecord);
+        multiMatchRecord.text = recordText;
+    }
+
+    public void SetSingleMatchRecord(int winCount, int loseCount, int curRecord)
+    {
+        var recordText = string.Format("혼자하기 : {0}승 {1}패 | 현재 {2} 연승", winCount, loseCount, curRecord);
+        singleMatchRecord.text = recordText;
+    }
+
+    public void ResetRecordBoard()
+    {
+        Transform usersTransform = recordBoard.transform.Find("Users");
+        int count = usersTransform.childCount;
+
+        for (int i = 0; i < count; i++)
+        {
+            string gameObjectName = string.Format("User{0}", i + 1);
+            Text textComponent = usersTransform.Find(gameObjectName).transform.GetComponentInChildren<Text>();
+
+            textComponent.text = string.Empty;
+        }
     }
 
     public void SetRecordBoard(FunEncoding encoding, object body)
