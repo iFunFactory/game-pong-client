@@ -8,6 +8,11 @@ using Fun;
 using System.Collections.Generic;
 using UnityEngine;
 using Facebook.Unity;
+
+// protobuf
+using funapi.network.fun_message;
+using pong_messages;
+
 public class FacebookManager : Singleton<FacebookManager>
 {
     private void Awake()
@@ -94,7 +99,12 @@ public class FacebookManager : Singleton<FacebookManager>
         }
         else
         {
-            // TODO(dkmoon): Protobuf
+            LobbyLoginRequest msg = new LobbyLoginRequest();
+            msg.id = token.UserId;
+            msg.access_token = token.TokenString;
+            msg.type = "fb";
+            FunMessage fun_msg = FunapiMessage.CreateFunMessage(msg, MessageType.lobby_login_req);
+            NetworkManager.Instance.Send("login", fun_msg);
         }
     }
 
