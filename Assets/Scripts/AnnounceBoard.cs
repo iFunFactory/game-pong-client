@@ -118,7 +118,6 @@ public class AnnounceBoard : MonoBehaviour
             target_pos_y = cur_pos_y - kViewHeight;
 
         content_rect_.sizeDelta = new Vector2(0f, cur_pos_y);
-        content_rect_.localPosition = new Vector3(0f, target_pos_y);
     }
 
     private const float kViewHeight = 470f;
