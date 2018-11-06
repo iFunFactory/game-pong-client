@@ -61,6 +61,9 @@ public class NetworkManager : Singleton<NetworkManager>
         public EncryptionType httpEncryption = EncryptionType.kDefaultEncryption;
 
         public bool useWWW = false;
+
+        [Header("Websocket Option")]
+        public EncryptionType websocketEncryption = EncryptionType.kDefaultEncryption;
     }
 
     public AnnouncementServerSetting announcementServer;
@@ -284,6 +287,12 @@ public class NetworkManager : Singleton<NetworkManager>
 
             option = http_option;
         }
+        else if (protocol == TransportProtocol.kWebsocket)
+        {
+            option = new TransportOption();
+            option.Encryption = lobbyServer.websocketEncryption;
+        }
+
 
         option.ConnectionTimeout = 10f;
 
