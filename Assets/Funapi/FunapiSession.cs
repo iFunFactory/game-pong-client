@@ -40,6 +40,9 @@ namespace Fun
         // Redirect-related variables
         public int redirectTimeout = 10;         // seconds
         public bool useRedirectQueue = false;
+
+        // Encryption-related variables
+        public string encryptionPublicKey = null;
     }
 
 
@@ -68,30 +71,30 @@ namespace Fun
         {
             FunDebug.Assert(option != null);
 
-            debug.Log("Starting a session module.");
-
-            state = State.kUnknown;
-            server_address_ = hostname_or_ip;
-            option_ = option;
-
+            // Sets the debug log instance.
             debug.SetDebugObject(this);
             cmd_list_.debug = debug;
             response_timeout_.debugLog = debug;
 
+            // Sets member variables.
+            state = State.kUnknown;
+            server_address_ = hostname_or_ip;
+            option_ = option;
+
+            // Sets response callback handlers.
             response_timeout_.SetCallbackHandler<int>(onResponseTimeoutCallback);
             response_timeout_.SetCallbackHandler<string>(onResponseTimeoutCallback);
 
+            // Adds this by mono listener.
             setMonoListener();
 
-            debug.Log("Plugin:{0} Protocol:{1} Reliability:{2}, SessionIdOnce:{3}",
+            debug.Log("[Session] Plugin:v{0}/v{1} Reliability:{2}, SessionIdOnce:{3}",
                       FunapiVersion.kPluginVersion, FunapiVersion.kProtocolVersion,
                       option.sessionReliability, option.sendSessionIdOnlyOnce);
         }
 
         void OnDestroy ()
         {
-            debug.Log("Destroy a session module.");
-
             if (Started)
             {
                 stopAll(true);
@@ -116,6 +119,7 @@ namespace Fun
 
             transport.sendSessionIdOnlyOnce = option_.sendSessionIdOnlyOnce;
             transport.delayedAckInterval = option_.delayedAckInterval;
+            transport.encryptionPublicKey = option_.encryptionPublicKey;
 
             addCommand(new CmdConnect(this, transport));
         }
@@ -127,7 +131,7 @@ namespace Fun
             {
                 debug.LogWarning("Session.Connect({0}) called but can't find a {1} transport. " +
                                  "You should call FunapiSession.Connect(protocol, encoding, ...) function.",
-                                 transport.str_protocol, transport.str_protocol);
+                                 convertString(protocol), convertString(protocol));
                 return;
             }
 
@@ -151,7 +155,7 @@ namespace Fun
             if (transport == null)
             {
                 debug.LogWarning("Session.Stop({0}) called but can't find a {1} transport.",
-                                 transport.str_protocol, transport.str_protocol);
+                                 convertString(protocol), convertString(protocol));
                 return;
             }
 
@@ -358,13 +362,13 @@ namespace Fun
         {
             if (transport == null)
             {
-                debug.DebugLog1("Session.Connect() called but the transport is null.");
+                debug.LogDebug("Session.Connect() called but the transport is null.");
                 return false;
             }
 
             if (!Started)
             {
-                debug.DebugLog1("Session.Connect({0}) called.", transport.str_protocol);
+                debug.LogDebug("Session.Connect({0}) called.", transport.str_protocol);
 
                 state = State.kStarted;
             }
@@ -385,7 +389,7 @@ namespace Fun
         {
             if (transport == null)
             {
-                debug.DebugLog1("Session.Stop() called but the transport is null.");
+                debug.LogDebug("Session.Stop() called but the transport is null.");
                 return false;
             }
 
@@ -403,7 +407,7 @@ namespace Fun
                 return false;
             }
 
-            debug.DebugLog1("Session.Stop({0}) called. (state:{1})", transport.str_protocol, state_);
+            debug.LogDebug("Session.Stop({0}) called. (state:{1})", transport.str_protocol, state_);
 
             if (!transport.Connected)
             {
@@ -428,7 +432,7 @@ namespace Fun
             if (state == State.kWaitForStop)
                 return false;
 
-            debug.DebugLog1("Session.StopAll() called. (state:{0})", state_);
+            debug.LogDebug("Session.StopAll() called. (state:{0})", state_);
 
             state = State.kWaitForStop;
 
@@ -452,9 +456,6 @@ namespace Fun
 
         IEnumerator onRedirect (string host)
         {
-            // Stopping all transports.
-            stopAll(true);
-
             // Wait for stop.
             while (Started)
             {
@@ -464,7 +465,7 @@ namespace Fun
             lock (transports_lock_)
             {
                 transports_.Clear();
-                debug.Log("Redirect: Removes all transports.");
+                debug.Log("[Redirect] Removes all transports.");
             }
 
             onSessionClosed();
@@ -473,7 +474,7 @@ namespace Fun
             default_protocol_ = TransportProtocol.kDefault;
 
             // Adds transports.
-            foreach (RedirectInfo info in redirect_list.Values)
+            foreach (RedirectInfo info in redirect_list_.Values)
             {
                 Connect(info.protocol, info.encoding, info.port, info.option);
             }
@@ -492,7 +493,7 @@ namespace Fun
 
                 if (DateTime.UtcNow.Ticks > redirect_timeout)
                 {
-                    debug.LogWarning("Redirect: Connection timed out. " +
+                    debug.LogWarning("[Redirect] Connection timed out. " +
                                      "Stops redirecting to another server. ({0})", host);
                     break;
                 }
@@ -518,7 +519,9 @@ namespace Fun
             if (transport == null || token.Length <= 0)
                 return;
 
-            debug.Log("Redirect: {0} sends redirect token to moved server.", transport.str_protocol);
+            debug.Log("[Redirect] {0} sending the redirect token to the other server.",
+                      transport.str_protocol);
+            debug.LogDebug("[Redirect] token: {0}", token);
 
             if (transport.encoding == FunEncoding.kJson)
             {
@@ -537,7 +540,7 @@ namespace Fun
 
         void onRedirectFailed ()
         {
-            debug.Log("Redirect: Failed to redirect.");
+            debug.Log("[Redirect] Failed to redirect.");
 
             wait_for_redirect_ = false;
             cmd_list_.Clear();
@@ -721,8 +724,6 @@ namespace Fun
                 session_id_.SetId(new_id);
                 prev_session_id_.SetId(new_id);
 
-                debug.Log("New session id: {0}", (string)session_id_);
-
                 onSessionOpened();
             }
             else if (session_id_ != new_id)
@@ -793,7 +794,8 @@ namespace Fun
         {
             if (wait_for_redirect_)
             {
-                debug.Log("Redirect: Session event ({0}).\nThis event callback is skipped.", type);
+                debug.Log("[Redirect] Session Event ({0}).\nThis event callback is skipped.",
+                          type.ToString().Substring(1));
                 return;
             }
 
@@ -802,7 +804,7 @@ namespace Fun
 
         void onSessionEventCallback (SessionEventType type)
         {
-            debug.Log("EVENT: Session ({0}).", type);
+            debug.Log("[Session] Event ({0}).", type.ToString().Substring(1));
 
             if (SessionEventCallback != null)
                 SessionEventCallback(type, session_id_);
@@ -823,27 +825,12 @@ namespace Fun
                     option = new TcpTransportOption();
                 else if (protocol == TransportProtocol.kHttp)
                     option = new HttpTransportOption();
-                else if (protocol == TransportProtocol.kWebsocket)
-                    option = new WebsocketTransportOption();
                 else
                     option = new TransportOption();
 
                 transport = getTransport(protocol, encoding, port, option);
                 if (transport != null)
                     return transport;
-
-                if (wait_for_redirect_)
-                {
-                    debug.Log("createTransport - {0} transport use the 'default option'.\n" +
-                              "If you want to use your option, " +
-                              "please set FunapiSession.TransportOptionCallback event.",
-                              convertString(protocol));
-                }
-                else
-                {
-                    debug.Log("createTransport - {0} transport use the 'default option'.",
-                              convertString(protocol));
-                }
             }
             else
             {
@@ -897,7 +884,7 @@ namespace Fun
             }
             catch (Exception e)
             {
-                FunDebug.LogWarning("Failure in createTransport: {0}", e.ToString());
+                debug.LogWarning("Failure in createTransport: {0}", e.ToString());
                 return null;
             }
 
@@ -906,7 +893,7 @@ namespace Fun
             if (default_protocol_ == TransportProtocol.kDefault)
                 default_protocol_ = reliable_protocol_;
 
-            debug.DebugLog1("{0} transport has been created.", transport.str_protocol);
+            debug.LogDebug("{0} transport has been created.", transport.str_protocol);
             return transport;
         }
 
@@ -1001,8 +988,8 @@ namespace Fun
                 // Checks transport's state.
                 while (transport.InProcess)
                 {
-                    debug.DebugLog1("Waiting for process before {0} transport to stop... ({1})",
-                                    transport.str_protocol, transport.HasUnsentMessages ? "sending" : "0");
+                    debug.LogDebug("Waiting for process before {0} transport to stop... ({1})",
+                                   transport.str_protocol, transport.HasUnsentMessages ? "sending" : "0");
 
                     if (DateTime.UtcNow.Ticks > wait_timeout)
                     {
@@ -1084,8 +1071,8 @@ namespace Fun
         {
             if (wait_for_redirect_)
             {
-                debug.Log("Redirect: {0} transport ({1}).\nThis event callback is skipped.",
-                          convertString(protocol), type);
+                debug.Log("[Redirect] {0} Event ({1}).\nThis event callback is skipped.",
+                          convertString(protocol), type.ToString().Substring(1));
                 return;
             }
 
@@ -1108,7 +1095,7 @@ namespace Fun
                     }
                 }
 
-                debug.Log("EVENT: {0} transport ({1}).", convertString(protocol), type);
+                debug.Log("[{0}] Event ({1}).", convertString(protocol), type.ToString().Substring(1));
 
                 if (TransportEventCallback != null)
                     TransportEventCallback(protocol, type);
@@ -1119,14 +1106,14 @@ namespace Fun
         {
             if (wait_for_redirect_)
             {
-                debug.LogWarning("Redirect: {0} error ({1})\nThis event callback is skipped.\n{2}.",
+                debug.LogWarning("[Redirect] {0} error ({1})\nThis event callback is skipped.\n{2}.",
                                  convertString(protocol), error.type, error.message);
                 return;
             }
 
             event_.Add (delegate
             {
-                debug.Log("ERROR: {0} transport ({1}).", convertString(protocol), error.type);
+                debug.LogWarning("[{0}] Error ({1}).", convertString(protocol), error.type);
 
                 if (TransportErrorCallback != null)
                     TransportErrorCallback(protocol, error);
@@ -1139,7 +1126,7 @@ namespace Fun
             if (Connected)
                 return;
 
-            // Checks that all transport have been stopped.
+            // Checks that all transport have been connected.
             lock (transports_lock_)
             {
                 foreach (Transport t in transports_.Values)
@@ -1149,11 +1136,17 @@ namespace Fun
                 }
             }
 
-            debug.Log("The default protocol is '{0}'", convertString(default_protocol_));
-
             state = State.kConnected;
 
             onSessionEvent(SessionEventType.kConnected);
+
+            lock (transports_lock_)
+            {
+                if (transports_.Count > 1)
+                {
+                    debug.Log("The default protocol is '{0}'", convertString(default_protocol_));
+                }
+            }
         }
 
         void checkAllTransportStopped ()
@@ -1218,7 +1211,7 @@ namespace Fun
 
             case kSessionClosedType:
                 {
-                    debug.Log("Session has been closed by server.");
+                    debug.LogWarning("Session has been closed by server.");
 
                     if (wait_for_redirect_)
                         return;
@@ -1271,56 +1264,55 @@ namespace Fun
             string host = "";
             string token = "";
             string flavor = "";
-            StringBuilder strlog = new StringBuilder();
 
-            redirect_list.Clear();
-            redirect_cur_tags.Clear();
-            redirect_target_tags.Clear();
+            redirect_list_.Clear();
+            redirect_cur_tags_.Clear();
+            redirect_target_tags_.Clear();
 
             if (encoding == FunEncoding.kJson)
             {
                 host = json_helper_.GetStringField(message, "host");
                 token = json_helper_.GetStringField(message, "token");
                 flavor = json_helper_.GetStringField(message, "flavor");
-                strlog.AppendFormat("Redirect: host:{0}, flavor:{1}, ", host, flavor);
+                debug.Log("[Redirect] host:{0}, flavor:{1}", host, flavor);
 
                 if (json_helper_.HasField(message, "current_tags"))
                 {
                     object tags = json_helper_.GetObject(message, "current_tags");
                     int length = json_helper_.GetArrayCount(tags);
-                    StringBuilder temp = new StringBuilder();
-                    temp.Append("current:[");
+                    StringBuilder log = new StringBuilder();
+                    log.Append("[Redirect] current tag [");
 
                     for (int i = 0; i < length; ++i)
                     {
                         string tag = json_helper_.GetArrayObject(tags, i) as string;
-                        redirect_cur_tags.Add(tag);
-                        temp.AppendFormat("{0}, ", tag);
+                        bool add_comma = i < length - 1;
+                        redirect_cur_tags_.Add(tag);
+                        log.AppendFormat(add_comma ? "{0}, " : "{0}", tag);
                     }
 
-                    temp.Append("] ");
-                    strlog.Append(temp.ToString());
+                    log.Append("] ");
+                    debug.Log(log.ToString());
                 }
 
                 if (json_helper_.HasField(message, "target_tags"))
                 {
                     object tags = json_helper_.GetObject(message, "target_tags");
                     int length = json_helper_.GetArrayCount(tags);
-                    StringBuilder temp = new StringBuilder();
-                    temp.Append("target:[");
+                    StringBuilder log = new StringBuilder();
+                    log.Append("[Redirect] target tag [");
 
                     for (int i = 0; i < length; ++i)
                     {
                         string tag = json_helper_.GetArrayObject(tags, i) as string;
-                        redirect_target_tags.Add(tag);
-                        temp.AppendFormat("{0}, ", tag);
+                        bool add_comma = i < length - 1;
+                        redirect_target_tags_.Add(tag);
+                        log.AppendFormat(add_comma ? "{0}, " : "{0}", tag);
                     }
 
-                    temp.Append("] ");
-                    strlog.Append(temp.ToString());
+                    log.Append("] ");
+                    debug.Log(log.ToString());
                 }
-
-                debug.Log(strlog.ToString());
 
                 object list = json_helper_.GetObject(message, "ports");
                 int count = json_helper_.GetArrayCount(list);
@@ -1332,10 +1324,10 @@ namespace Fun
                     info.encoding = (FunEncoding)json_helper_.GetIntegerField(item, "encoding");
                     info.port = (ushort)json_helper_.GetIntegerField(item, "port");
                     info.option = getTransportOption(flavor, info.protocol);
-                    redirect_list.Add(info.protocol, info);
+                    redirect_list_.Add(info.protocol, info);
 
-                    debug.Log("Redirect: connect > protocol:{0} encoding:{1} port:{2} ",
-                              convertString(info.protocol), convertString(info.encoding), info.port);
+                    debug.Log("[Redirect] {0}, {1}:{2}, {3}",
+                              convertString(info.protocol), host, info.port, convertString(info.encoding));
                 }
             }
             else if (encoding == FunEncoding.kProtobuf)
@@ -1348,29 +1340,46 @@ namespace Fun
                 host = redirect.host;
                 token = redirect.token;
                 flavor = redirect.flavor;
-                strlog.AppendFormat("Redirect: host:{0}, flavor:{1}, ", host, flavor);
+                debug.Log("[Redirect] host:{0}, flavor:{1}", host, flavor);
 
                 if (redirect.current_tags.Count > 0)
                 {
-                    redirect_cur_tags.AddRange(redirect.current_tags);
+                    redirect_cur_tags_.AddRange(redirect.current_tags);
 
-                    strlog.AppendFormat("current:[");
-                    foreach (string tag in redirect_cur_tags)
-                        strlog.AppendFormat("{0}, ", tag);
-                    strlog.Append("] ");
+                    StringBuilder log = new StringBuilder();
+                    log.AppendFormat("[Redirect] current tag [");
+
+                    int count = redirect_cur_tags_.Count;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        string tag = redirect_cur_tags_[i];
+                        bool add_comma = i < count - 1;
+                        log.AppendFormat(add_comma ? "{0}, " : "{0}", tag);
+                    }
+
+                    log.Append("] ");
+                    debug.Log(log.ToString());
                 }
 
                 if (redirect.target_tags.Count > 0)
                 {
-                    redirect_target_tags.AddRange(redirect.target_tags);
+                    redirect_target_tags_.AddRange(redirect.target_tags);
 
-                    strlog.AppendFormat("target:[");
-                    foreach (string tag in redirect_target_tags)
-                        strlog.AppendFormat("{0}, ", tag);
-                    strlog.Append("] ");
+                    StringBuilder log = new StringBuilder();
+                    log.AppendFormat("[Redirect] target tag [");
+
+                    int count = redirect_target_tags_.Count;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        string tag = redirect_target_tags_[i];
+                        bool add_comma = i < count - 1;
+                        log.AppendFormat(add_comma ? "{0}, " : "{0}", tag);
+
+                    }
+
+                    log.Append("] ");
+                    debug.Log(log.ToString());
                 }
-
-                debug.Log(strlog.ToString());
 
                 foreach (FunRedirectMessage.ServerPort item in redirect.ports)
                 {
@@ -1379,10 +1388,10 @@ namespace Fun
                     info.encoding = (FunEncoding)item.encoding;
                     info.port = (ushort)item.port;
                     info.option = getTransportOption(flavor, info.protocol);
-                    redirect_list.Add(info.protocol, info);
+                    redirect_list_.Add(info.protocol, info);
 
-                    debug.Log("Redirect: connect > protocol:{0} encoding:{1} port:{2} ",
-                              convertString(info.protocol), convertString(info.encoding), info.port);
+                    debug.Log("[Redirect] {0}, {1}:{2}, {3}",
+                              convertString(info.protocol), host, info.port, convertString(info.encoding));
                 }
             }
 
@@ -1393,7 +1402,7 @@ namespace Fun
                 return;
             }
 
-            if (redirect_list.Count <= 0)
+            if (redirect_list_.Count <= 0)
             {
                 debug.LogWarning("onRedirectMessage - Server port list is empty.");
                 return;
@@ -1401,6 +1410,16 @@ namespace Fun
 
             redirect_token_ = token;
             wait_for_redirect_ = true;
+
+            // Stopping all transports.
+            lock (transports_lock_)
+            {
+                foreach (Transport transport in transports_.Values)
+                {
+                    transport.IsRedirecting = true;
+                    transport.Stop();
+                }
+            }
 
             // Notify start to redirect.
             onSessionEventCallback(SessionEventType.kRedirectStarted);
@@ -1458,24 +1477,24 @@ namespace Fun
         void addUnsentMessageQueue (string msg_type, object message, TransportProtocol protocol, EncryptionType enc_type)
         {
             // Checks the protocol of the server to be moved
-            if (!redirect_list.ContainsKey(protocol))
+            if (!redirect_list_.ContainsKey(protocol))
             {
-                debug.LogWarning("Redirect: There's no {0} transport. '{1}' message skipped.",
+                debug.LogWarning("[Redirect] There's no {0} transport. '{1}' message skipped.",
                                  convertString(protocol), msg_type);
                 return;
             }
 
             // Checks encoding type of the server to be moved
             FunEncoding encoding = message is FunMessage ? FunEncoding.kProtobuf : FunEncoding.kJson;
-            if (redirect_list[protocol].encoding != encoding)
+            if (redirect_list_[protocol].encoding != encoding)
             {
-                debug.LogWarning("Redirect: '{0}' message skipped. This message's encoding type is {1}. (expected type: {2})",
-                                 msg_type, convertString(encoding), convertString(redirect_list[protocol].encoding));
+                debug.LogWarning("[Redirect] '{0}' message skipped. This message's encoding type is {1}. (expected type: {2})",
+                                 msg_type, convertString(encoding), convertString(redirect_list_[protocol].encoding));
                 return;
             }
 
             // Queueing a message
-            debug.Log("Redirect: {0} adds '{1}' message to the queue.", convertString(protocol), msg_type);
+            debug.Log("[Redirect] {0} adds '{1}' message to the queue.", convertString(protocol), msg_type);
 
             lock (unsent_message_lock_)
             {
@@ -1499,22 +1518,22 @@ namespace Fun
                     if (queue.Count <= 0)
                         continue;
 
-                    debug.Log("Redirect: {0} has {1} unsent message(s).", convertString(protocol), queue.Count);
+                    debug.Log("[Redirect] {0} has {1} unsent message(s).", convertString(protocol), queue.Count);
 
                     Transport transport = GetTransport(protocol);
                     if (transport == null)
                     {
-                        queue.Clear();
-                        debug.Log("Redirect: There's no {0} transport. Deletes {1} unsent message(s).",
+                        debug.Log("[Redirect] There's no {0} transport. Deletes {1} unsent message(s).",
                                   convertString(protocol), queue.Count);
+                        queue.Clear();
                     }
                     else
                     {
                         // Fowards to user to check for queueing messages.
                         if (RedirectQueueCallback != null)
                         {
-                            debug.Log("Redirect: {0} calls queue event callback.", transport.str_protocol);
-                            RedirectQueueCallback(protocol, redirect_cur_tags, redirect_target_tags, queue);
+                            debug.Log("[Redirect] {0} calls queue event callback.", transport.str_protocol);
+                            RedirectQueueCallback(protocol, redirect_cur_tags_, redirect_target_tags_, queue);
                         }
 
                         // Sends unsent messages.
@@ -1541,12 +1560,11 @@ namespace Fun
                         }
 
                         if (sending_count > 0)
-                            debug.DebugLog1("{0} sent {1} unsent message(s).", transport.str_protocol, sending_count);
+                            debug.LogDebug("{0} sent {1} unsent message(s).", transport.str_protocol, sending_count);
                     }
                 }
             }
         }
-
 
         // Convert to protocol string
         static string convertString (TransportProtocol protocol)
@@ -1587,6 +1605,16 @@ namespace Fun
                 return "Aes128";
 
             return "Enc-None";
+        }
+
+        static string convertString (FunCompressionType type)
+        {
+            if (type == FunCompressionType.kDeflate)
+                return "Deflate";
+            else if (type == FunCompressionType.kZstd)
+                return "Zstd";
+
+            return "None";
         }
 
 
@@ -1778,9 +1806,9 @@ namespace Fun
         // Redirect-related variables.
         bool wait_for_redirect_ = false;
         string redirect_token_ = "";
-        List<string> redirect_cur_tags = new List<string>();
-        List<string> redirect_target_tags = new List<string>();
-        Dictionary<TransportProtocol, RedirectInfo> redirect_list = new Dictionary<TransportProtocol, RedirectInfo>();
+        List<string> redirect_cur_tags_ = new List<string>();
+        List<string> redirect_target_tags_ = new List<string>();
+        Dictionary<TransportProtocol, RedirectInfo> redirect_list_ = new Dictionary<TransportProtocol, RedirectInfo>();
         Dictionary<TransportProtocol, Queue<UnsentMessage>> unsent_messages_ = new Dictionary<TransportProtocol, Queue<UnsentMessage>>();
         object unsent_message_lock_ = new object();
 

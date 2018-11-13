@@ -170,7 +170,7 @@ namespace Fun
 
             if (www.texture != null)
             {
-                FunDebug.DebugLog1("{0}'s profile picture downloaded.", info.name);
+                FunDebug.LogDebug("{0}'s profile picture downloaded.", info.name);
                 info.picture = www.texture;
                 OnPictureNotify(info);
             }
@@ -188,7 +188,7 @@ namespace Fun
 
                 if (www.texture != null)
                 {
-                    FunDebug.DebugLog1("{0}'s profile picture downloaded.", user.name);
+                    FunDebug.LogDebug("{0}'s profile picture downloaded.", user.name);
                     user.picture = www.texture;
                     OnPictureNotify(user);
                 }

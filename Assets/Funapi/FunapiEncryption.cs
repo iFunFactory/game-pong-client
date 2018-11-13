@@ -33,10 +33,9 @@ namespace Fun
                 return new Encryptor0();
 
             case EncryptionType.kIFunEngine1Encryption:
-                return new Encryptor1();
-
             case EncryptionType.kIFunEngine2Encryption:
-                return new Encryptor2();
+                FunDebug.LogWarning("This plugin is not support '{0}' encryption.", type);
+                return null;
 
             case EncryptionType.kChaCha20Encryption:
                 return new EncryptorChacha20();
@@ -90,22 +89,6 @@ namespace Fun
             get { return state_; }
         }
 
-        protected void setState (State state)
-        {
-            state_ = state;
-        }
-
-        protected static byte circularLeftShift (byte value, int shift_len)
-        {
-            shift_len = shift_len % 8;
-            return (byte)((value << shift_len) | (value >> (sizeof(byte) * 8 - shift_len)));
-        }
-
-        protected static UInt32 circularLeftShift (UInt32 value, int shift_len)
-        {
-            return (value << shift_len) | (value >> (sizeof(UInt32) * 8 - shift_len));
-        }
-
 
         public enum State
         {
@@ -148,153 +131,6 @@ namespace Fun
 
             string out_header = "";
             return Encrypt(src, dst, ref out_header);
-        }
-    }
-
-
-    // encryption - ife1
-    class Encryptor1 : Encryptor
-    {
-        public Encryptor1 () : base(EncryptionType.kIFunEngine1Encryption, "ife1", State.kHandshaking)
-        {
-            enc_key_ = 0;
-            dec_key_ = 0;
-        }
-
-        public override void Reset ()
-        {
-            setState(State.kHandshaking);
-        }
-
-        public override bool Handshake (string in_header, ref string out_header)
-        {
-            FunDebug.Assert(state == State.kHandshaking);
-
-            enc_key_ = Convert.ToUInt32(in_header);
-            dec_key_ = enc_key_;
-
-            setState(State.kEstablished);
-
-            return true;
-        }
-
-        public override Int64 Encrypt (ArraySegment<byte> src, ArraySegment<byte> dst, ref string out_header)
-        {
-            return encrypt(src, dst, ref enc_key_);
-        }
-
-        public override Int64 Decrypt (ArraySegment<byte> src, ArraySegment<byte> dst, string in_header)
-        {
-            if (in_header.Length > 0)
-            {
-                FunDebug.LogWarning("Encryptor1.Decrypt - Wrong encryptor header.");
-                return -1;
-            }
-
-            return encrypt(src, dst, ref dec_key_);
-        }
-
-        static Int64 encrypt (ArraySegment<byte> src, ArraySegment<byte> dst, ref UInt32 key)
-        {
-            if (dst.Count != src.Count)
-                return -1;
-
-            // update key
-            key = 8253729 * key + 2396403;
-
-            int shift_len = (int)(key & 0x0F);
-            UInt32 key32 = circularLeftShift(key, shift_len);
-            byte[] kbytes = BitConverter.GetBytes(key32);
-
-            // Encrypted in kBlockSize
-            int src_offset = src.Offset, dst_offset = dst.Offset;
-            int i, n, length = src.Count - (src.Count % kBlockSize);
-            for (i = 0; i < length; i += kBlockSize)
-            {
-                for (n = 0; n < kBlockSize; ++n)
-                    dst.Array[dst_offset + n] = (byte)(src.Array[src_offset + n] ^ kbytes[n]);
-
-                src_offset += kBlockSize;
-                dst_offset += kBlockSize;
-            }
-
-            byte key8 = 0;
-            byte[] k = BitConverter.GetBytes(key);
-            if (BitConverter.IsLittleEndian)
-                key8 = circularLeftShift(k[0], shift_len);
-            else
-                key8 = circularLeftShift(k[3], shift_len);
-
-            // The remaining values are encrypted in units of 1byte
-            int left = src.Count % kBlockSize;
-            for (i = 0; i < left; ++i)
-            {
-                n = src.Count - 1 - i;
-                dst.Array[dst.Offset + n] = (byte)(src.Array[src.Offset + n] ^ key8);
-            }
-
-            return src.Count;
-        }
-
-
-        const int kBlockSize = sizeof(UInt32);
-
-        UInt32 enc_key_;
-        UInt32 dec_key_;
-    }
-
-
-    // encryption - ife2
-    class Encryptor2 : Encryptor
-    {
-        public Encryptor2 () : base(EncryptionType.kIFunEngine2Encryption, "ife2", State.kEstablished)
-        {
-        }
-
-        public override Int64 Encrypt (ArraySegment<byte> src, ArraySegment<byte> dst, ref string out_header)
-        {
-            return encrypt(src, dst);
-        }
-
-        public override Int64 Decrypt (ArraySegment<byte> src, ArraySegment<byte> dst, string in_header)
-        {
-            if (in_header.Length > 0)
-            {
-                FunDebug.LogWarning("Encryptor2.Decrypt - Wrong encryptor header.");
-                return -1;
-            }
-
-            return decrypt(src, dst);
-        }
-
-        static Int64 encrypt (ArraySegment<byte> src, ArraySegment<byte> dst)
-        {
-            byte key = (byte)src.Count;
-            int shift_len = 0;
-
-            shift_len = key % (sizeof(byte) * 8);
-
-            for (Int64 i = 0; i < src.Count; ++i)
-            {
-                dst.Array[dst.Offset + i] = circularLeftShift((byte)(src.Array[src.Offset + i] ^ key), shift_len);
-            }
-
-            return src.Count;
-        }
-
-        static Int64 decrypt (ArraySegment<byte> src, ArraySegment<byte> dst)
-        {
-            byte key = (byte)src.Count;
-            int shift_len = 0;
-
-            shift_len = (sizeof(byte) * 8) - (key % (sizeof(byte) * 8));
-
-            for (Int64 i = 0; i < src.Count; ++i)
-            {
-                dst.Array[dst.Offset + i] = (byte)(circularLeftShift(src.Array[src.Offset + i], shift_len) ^ key);
-            }
-
-            return src.Count;
         }
     }
 
@@ -426,6 +262,18 @@ namespace Fun
             debug.SetDebugObject(this);
         }
 
+        public static byte[] UnHexifyKey(string key)
+        {
+            if (key.Length != 64)
+            {
+                throw new ArgumentException("Length of public key is not 64. The length should be 64 bytes.",
+                                            "FunapiEncryptor.public_key");
+            }
+
+            return Sodium.Unhexify(key);
+
+        }
+
         bool createEncryptor (EncryptionType type)
         {
             if (encryptors_.ContainsKey(type))
@@ -464,6 +312,12 @@ namespace Fun
 
         protected void setEncryption (EncryptionType type)
         {
+            if (type == EncryptionType.kIFunEngine1Encryption || type == EncryptionType.kIFunEngine2Encryption)
+            {
+                debug.LogWarning("This plugin is not support '{0}' encryption.", type);
+                return;
+            }
+
             if (!createEncryptor(type))
                 return;
 
@@ -625,9 +479,15 @@ namespace Fun
         }
 
         // return value: client public key
-        protected string generatePublicKey (EncryptionType type)
+        protected string generatePublicKey (EncryptionType type, byte[] pub_key)
         {
-            if (pub_key_ == null)
+            if (pub_key == null)
+            {
+                // use default encryption key
+                pub_key = default_pub_key_;
+            }
+
+            if (pub_key == null)
             {
                 debug.LogError("Please set the value of 'FunapiEncryptor.public_key' first before connecting.\n" +
                                "  The encryption public key can be found in the MANIFEST file on the server.\n" +
@@ -641,20 +501,14 @@ namespace Fun
                 return null;
             }
 
-            return encryptors_[type].generatePublicKey(pub_key_);
+            return encryptors_[type].generatePublicKey(pub_key);
         }
 
         public static string public_key
         {
             set
             {
-                if (value.Length != 64)
-                {
-                    throw new ArgumentException("Length of public key is not 64. The length should be 64 bytes.",
-                                                "FunapiEncryptor.public_key");
-                }
-
-                pub_key_ = Sodium.Unhexify(value);
+                default_pub_key_ = UnHexifyKey(value);
             }
         }
 
@@ -665,7 +519,9 @@ namespace Fun
 
         EncryptionType default_encryptor_ = EncryptionType.kNoneEncryption;
         Dictionary<EncryptionType, Encryptor> encryptors_ = new Dictionary<EncryptionType, Encryptor>();
-        static byte[] pub_key_ = null;
+
+        // default encryption key
+        static byte[] default_pub_key_ = null;
 
         // For debugging
         protected FunDebugLog debug = new FunDebugLog();

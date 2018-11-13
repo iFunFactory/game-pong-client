@@ -28,23 +28,18 @@ namespace Fun
 
         public byte[] GetBytes (FunEncoding encoding)
         {
+            if (message == null)
+            {
+                return new byte[0];
+            }
+
             if (encoding == FunEncoding.kJson)
             {
-                if (message == null)
-                {
-                    return new byte[0];
-                }
-                else
-                {
-                    string str = json_helper_.Serialize(message);
-                    return System.Text.Encoding.UTF8.GetBytes(str);
-                }
+                string str = json_helper_.Serialize(message);
+                return System.Text.Encoding.UTF8.GetBytes(str);
             }
             else if (encoding == FunEncoding.kProtobuf)
             {
-                if (message == null)
-                    message = new FunMessage();
-
                 MemoryStream stream = new MemoryStream();
                 serializer_.Serialize(stream, message);
 
@@ -187,7 +182,7 @@ namespace Fun
             if (encoding == FunEncoding.kJson)
             {
                 string str = System.Text.Encoding.UTF8.GetString(buffer.Array, buffer.Offset, buffer.Count);
-                //FunDebug.DebugLog2("Parsed json: {0}", str);
+                //FunDebug.LogDebug("Parsed json: {0}", str);
                 return json_helper_.Deserialize(str);
             }
             else if (encoding == FunEncoding.kProtobuf)

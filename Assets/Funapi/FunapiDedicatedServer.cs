@@ -134,7 +134,7 @@ namespace Fun
                     string key = n.Substring(1, index - 1);
                     string value = n.Substring(index + 1, n.Length - index - 1);
                     arg_list.Add(key, value);
-                    FunDebug.DebugLog1("command argument - key:{0} value:{1}", key, value);
+                    FunDebug.LogDebug("command argument - key:{0} value:{1}", key, value);
                 }
                 else if (n.Contains(kServerVersion))
                 {
@@ -163,7 +163,7 @@ namespace Fun
                 {
                     instance.httpPost(CmdVersion, version, delegate (object obj)
                     {
-                        FunDebug.Log("Sent the dedicated server version. ({0})", version);
+                        FunDebug.Log("Dedicated Server - Sent the version. ({0})", version);
                     });
                 }
 
@@ -306,7 +306,7 @@ namespace Fun
                         if (user.ContainsKey("token"))
                             token = user["token"] as string;
 
-                        FunDebug.DebugLog1("user - uid:{0} token:{1}", uid, token);
+                        FunDebug.LogDebug("user - uid:{0} token:{1}", uid, token);
 
                         if (uid.Length > 0 && token.Length > 0)
                             users_.Add(uid, token);
@@ -362,7 +362,7 @@ namespace Fun
                 return;
 
             string url = (needMatchId(command) ? server_url_with_match_id_ : server_url_) + command;
-            FunDebug.DebugLog1("FunapiDedicatedServer.webRequest called.\n  {0} {1}", method, url);
+            FunDebug.LogDebug("FunapiDedicatedServer.webRequest called.\n  {0} {1}", method, url);
 
             // Request
             HttpWebRequest web_request = (HttpWebRequest)WebRequest.Create(url);
@@ -408,8 +408,8 @@ namespace Fun
                 if ((we != null && we.Status == WebExceptionStatus.RequestCanceled) ||
                     (e is ObjectDisposedException || e is NullReferenceException))
                 {
-                    // When Stop is called HttpWebRequest.EndGetRequestStream may return a Exception
-                    FunDebug.DebugLog1("Dedicated server request operation has been cancelled.");
+                    // When Stop is called HttpWebRequest.EndGetRequestStream may return an Exception
+                    FunDebug.LogDebug("Dedicated Server - Request operation has been cancelled.");
                     return;
                 }
             }
@@ -422,7 +422,7 @@ namespace Fun
                 Request request = (Request)ar.AsyncState;
                 if (request.was_aborted)
                 {
-                    FunDebug.Log("Dedicated manager server response callback - request aborted.");
+                    FunDebug.Log("Dedicated Server - Response callback. Request aborted.");
                     return;
                 }
 
@@ -470,7 +470,7 @@ namespace Fun
                     (e is ObjectDisposedException || e is NullReferenceException))
                 {
                     // When Stop is called HttpWebRequest.EndGetResponse may return a Exception
-                    FunDebug.DebugLog1("Dedicated server request operation has been cancelled.");
+                    FunDebug.LogDebug("Dedicated server request operation has been cancelled.");
                 }
             }
         }
@@ -512,7 +512,7 @@ namespace Fun
             {
                 if (e is ObjectDisposedException || e is NullReferenceException)
                 {
-                    FunDebug.DebugLog1("Dedicated server request operation has been cancelled.");
+                    FunDebug.LogDebug("Dedicated server request operation has been cancelled.");
                 }
             }
         }

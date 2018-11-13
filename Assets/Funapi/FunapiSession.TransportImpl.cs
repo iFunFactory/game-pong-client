@@ -5,10 +5,11 @@
 // consent of iFunFactory Inc.
 
 using System;
-using System.IO;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
 using WebSocketSharp;
@@ -33,6 +34,12 @@ namespace Fun
                 option = tcp_option;
 
                 setAddress(hostname_or_ip, port);
+
+                ssl_ = (option as TcpTransportOption).UseTLS;
+                if (ssl_)
+                {
+                    TrustManager.LoadMozRoots();
+                }
             }
 
             public override HostAddr address
@@ -54,11 +61,12 @@ namespace Fun
                 addr_ = new HostIP(host, port);
 
                 TcpTransportOption tcp_option = (TcpTransportOption)option_;
-                debug.Log("TCP connect - {0}:{1}, {2}, {3}, Compression:{4}, Sequence:{5}, " +
+                debug.Log("[TCP] {0}:{1}, {2}, {3}, Compression:{4}, Sequence:{5}, " +
                           "ConnectionTimeout:{6}, AutoReconnect:{7}, Nagle:{8}, Ping:{9}",
                           addr_.ip, addr_.port, convertString(encoding_), convertString(tcp_option.Encryption),
-                          tcp_option.CompressionType, tcp_option.SequenceValidation, tcp_option.ConnectionTimeout,
-                          tcp_option.AutoReconnect, !tcp_option.DisableNagle, tcp_option.EnablePing);
+                          convertString(tcp_option.CompressionType), tcp_option.SequenceValidation,
+                          tcp_option.ConnectionTimeout, tcp_option.AutoReconnect,
+                          !tcp_option.DisableNagle, tcp_option.EnablePing);
             }
 
             protected override void onStart ()
@@ -85,22 +93,30 @@ namespace Fun
             {
                 lock (sock_lock_)
                 {
+                    if (ssl_stream_ != null)
+                    {
+                        ssl_stream_.Close();
+                        ssl_stream_ = null;
+                    }
+
                     if (sock_ != null)
                     {
                         sock_.Close();
                         sock_ = null;
                     }
                 }
+
+                base.onClose();
             }
 
             protected override void wireSend ()
             {
+                byte[] send_buffer = null;
                 List<ArraySegment<byte>> list = new List<ArraySegment<byte>>();
+                int length = 0;
 
                 lock (sending_lock_)
                 {
-                    int length = 0;
-
                     foreach (FunapiMessage msg in sending_)
                     {
                         if (msg.header.Count > 0)
@@ -116,7 +132,20 @@ namespace Fun
                         }
                     }
 
-                    debug.DebugLog2("TCP sending {0} message(s). ({1}bytes)", sending_.Count, length);
+                    if (ssl_)
+                    {
+                        ssl_send_size_ = length;
+
+                        send_buffer = new byte[ssl_send_size_];
+                        int offset = 0;
+                        foreach (ArraySegment<byte> data in list)
+                        {
+                            Buffer.BlockCopy(data.Array, 0, send_buffer, offset, data.Count);
+                            offset += data.Count;
+                        }
+                    }
+
+                    debug.LogDebug("[TCP] sending {0} message(s). ({1}bytes)", sending_.Count, length);
                 }
 
                 try
@@ -124,22 +153,37 @@ namespace Fun
                     lock (sock_lock_)
                     {
                         if (sock_ == null)
+                        {
                             return;
+                        }
 
-                        sock_.BeginSend(list, SocketFlags.None, new AsyncCallback(this.sendBytesCb), this);
+                        if (ssl_)
+                        {
+                            if (ssl_stream_ == null)
+                            {
+                                debug.LogWarning("[TCP] SSL stream is null.");
+                                return;
+                            }
+
+                            ssl_stream_.BeginWrite(send_buffer, 0, length, new AsyncCallback(this.sendBytesCb), ssl_stream_);
+                        }
+                        else
+                        {
+                            sock_.BeginSend(list, SocketFlags.None, new AsyncCallback(this.sendBytesCb), this);
+                        }
                     }
                 }
                 catch (Exception e)
                 {
                     if (e is ObjectDisposedException || e is NullReferenceException)
                     {
-                        debug.DebugLog1("TCP BeginSend operation has been cancelled.");
+                        debug.LogDebug("[TCP] BeginSend operation has been cancelled.");
                         return;
                     }
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "TCP failure in wireSend: " + e.ToString();
+                    error.message = "[TCP] failure in wireSend: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -151,45 +195,87 @@ namespace Fun
                     lock (sock_lock_)
                     {
                         if (sock_ == null)
+                        {
                             return;
+                        }
 
                         sock_.EndConnect(ar);
                         if (sock_.Connected == false)
                         {
                             TransportError error = new TransportError();
                             error.type = TransportError.Type.kStartingFailed;
-                            error.message = string.Format("TCP connection failed.");
+                            error.message = string.Format("[TCP] connection failed.");
                             onFailure(error);
                             return;
                         }
-                        debug.DebugLog1("TCP transport connected. Starts handshaking..");
+                        debug.LogDebug("[TCP] transport connected. Starts handshaking..");
+
+                        if (ssl_)
+                        {
+                            ssl_stream_ = new SslStream(new NetworkStream(sock_), false, TrustManager.CertValidationCallback);
+                        }
 
                         state_ = State.kHandshaking;
 
                         lock (receive_lock_)
                         {
                             // Wait for handshaking message.
-                            ArraySegment<byte> wrapped = new ArraySegment<byte>(receive_buffer_, 0, receive_buffer_.Length);
-                            List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
-                            buffer.Add(wrapped);
-                            sock_.BeginReceive(buffer, SocketFlags.None, new AsyncCallback(this.receiveBytesCb), this);
+                            if (ssl_)
+                            {
+                                if (ssl_stream_ == null)
+                                {
+                                    debug.LogWarning("[TCP] SSL stream is null.");
+                                    return;
+                                }
+
+                                ssl_stream_.BeginAuthenticateAsClient(addr_.host, new AsyncCallback(this.authenticateCb), ssl_stream_);
+                            }
+                            else
+                            {
+                                ArraySegment<byte> wrapped = new ArraySegment<byte>(receive_buffer_, 0, receive_buffer_.Length);
+                                List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
+                                buffer.Add(wrapped);
+
+                                sock_.BeginReceive(buffer, SocketFlags.None, new AsyncCallback(this.receiveBytesCb), this);
+                            }
                         }
                     }
                 }
                 catch (ObjectDisposedException)
                 {
-                    debug.DebugLog1("TCP BeginConnect operation has been cancelled.");
+                    debug.LogDebug("[TCP] BeginConnect operation has been cancelled.");
                 }
                 catch (Exception e)
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kStartingFailed;
-                    error.message = "TCP failure in startCb: " + e.ToString();
+                    error.message = "[TCP] failure in startCb: " + e.ToString();
                     onFailure(error);
                 }
             }
 
-            void sendBytesCb (IAsyncResult ar)
+            void authenticateCb (IAsyncResult ar)
+            {
+                try
+                {
+                    ssl_stream_.EndAuthenticateAsClient(ar);
+
+                    ssl_stream_.BeginRead(receive_buffer_, 0, receive_buffer_.Length, new AsyncCallback(this.receiveBytesCb), ssl_stream_);
+                }
+                catch (ObjectDisposedException)
+                {
+                    debug.LogDebug("TCP BeginAuthenticateAsClient operation has been cancelled.");
+                }
+                catch (Exception e)
+                {
+                    TransportError error = new TransportError();
+                    error.type = TransportError.Type.kStartingFailed;
+                    error.message = "TCP failure in authenticateCb: " + e.ToString();
+                    onFailure(error);
+                }
+            }
+
+            void  sendBytesCb (IAsyncResult ar)
             {
                 try
                 {
@@ -198,45 +284,76 @@ namespace Fun
                     lock (sock_lock_)
                     {
                         if (sock_ == null)
-                            return;
-
-                        nSent = sock_.EndSend(ar);
-                    }
-                    FunDebug.Assert(nSent > 0, "TCP failed to transfer messages.");
-
-                    debug.DebugLog3("TCP sent {0} bytes.", nSent);
-
-                    lock (sending_lock_)
-                    {
-                        while (nSent > 0)
                         {
-                            FunDebug.Assert(sending_.Count > 0,
-                                string.Format("TCP couldn't find the sending buffers that sent messages.\n" +
-                                              "Sent {0} more bytes but there are no sending buffers.", nSent));
-
-                            // removes a sent message.
-                            FunapiMessage msg = sending_[0];
-                            int length = msg.header.Count + msg.body.Count;
-                            nSent -= length;
-                            sending_.RemoveAt(0);
+                            return;
                         }
 
-                        FunDebug.Assert(sending_.Count == 0,
-                            string.Format("sendBytesCb - sending buffer has {0} message(s).", sending_.Count));
+                        if (ssl_)
+                        {
+                            if (ssl_stream_ == null)
+                            {
+                                debug.LogWarning("[TCP] SSL stream is null.");
+                                return;
+                            }
 
-                        // Sends pending messages
-                        checkPendingMessages();
+                            ssl_stream_.EndWrite(ar);
+
+                            nSent = ssl_send_size_;
+                            ssl_send_size_ = 0;
+                        }
+                        else
+                        {
+                            nSent = sock_.EndSend(ar);
+                        }
+                    }
+
+                    if (nSent > 0)
+                    {
+                        debug.LogDebug("[TCP] sent {0} bytes.", nSent);
+
+                        lock (sending_lock_)
+                        {
+                            while (nSent > 0)
+                            {
+                                if (sending_.Count > 0)
+                                {
+                                    // removes a sent message.
+                                    FunapiMessage msg = sending_[0];
+                                    int length = msg.header.Count + msg.body.Count;
+                                    nSent -= length;
+                                    sending_.RemoveAt(0);
+                                }
+                                else
+                                {
+                                    debug.LogError("[TCP] couldn't find the sending buffers that sent messages.\n" +
+                                                   "Sent {0} more bytes but there are no sending buffers.", nSent);
+                                    break;
+                                }
+                            }
+
+                            if (sending_.Count != 0)
+                            {
+                                debug.LogError("sendBytesCb - sending buffer has {0} message(s).", sending_.Count);
+                            }
+
+                            // Sends pending messages.
+                            checkPendingMessages();
+                        }
+                    }
+                    else
+                    {
+                        debug.LogWarning("[TCP] socket closed");
                     }
                 }
                 catch (ObjectDisposedException)
                 {
-                    debug.DebugLog1("TCP BeginSend operation has been cancelled.");
+                    debug.LogDebug("[TCP] BeginSend operation has been cancelled.");
                 }
                 catch (Exception e)
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "TCP failure in sendBytesCb: " + e.ToString();
+                    error.message = "[TCP] failure in sendBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -250,9 +367,24 @@ namespace Fun
                     lock (sock_lock_)
                     {
                         if (sock_ == null)
+                        {
                             return;
+                        }
 
-                        nRead = sock_.EndReceive(ar);
+                        if (ssl_)
+                        {
+                            if (ssl_stream_ == null)
+                            {
+                                debug.LogWarning("[TCP] SSL stream is null.");
+                                return;
+                            }
+
+                            nRead = ssl_stream_.EndRead(ar);
+                        }
+                        else
+                        {
+                            nRead = sock_.EndReceive(ar);
+                        }
                     }
 
                     lock (receive_lock_)
@@ -260,7 +392,7 @@ namespace Fun
                         if (nRead > 0)
                         {
                             received_size_ += nRead;
-                            debug.DebugLog3("TCP received {0} bytes. Buffer has {1} bytes.",
+                            debug.LogDebug("[TCP] received {0} bytes. Buffer has {1} bytes.",
                                             nRead, received_size_ - next_decoding_offset_);
 
                             // Parses messages
@@ -270,28 +402,31 @@ namespace Fun
                             checkReceiveBuffer();
 
                             // Starts another async receive
-                            ArraySegment<byte> residual = new ArraySegment<byte>(
-                                receive_buffer_, received_size_, receive_buffer_.Length - received_size_);
-
-                            List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
-                            buffer.Add(residual);
-
                             lock (sock_lock_)
                             {
-                                sock_.BeginReceive(buffer, SocketFlags.None, new AsyncCallback(this.receiveBytesCb), this);
-                                debug.DebugLog3("TCP ready to receive more. TCP can receive upto {0} more bytes.",
-                                                receive_buffer_.Length - received_size_);
+                                if (ssl_)
+                                {
+                                    ssl_stream_.BeginRead(receive_buffer_, received_size_, receive_buffer_.Length - received_size_,
+                                                         new AsyncCallback(this.receiveBytesCb), ssl_stream_);
+                                }
+                                else
+                                {
+                                    ArraySegment<byte> residual = new ArraySegment<byte>(
+                                    receive_buffer_, received_size_, receive_buffer_.Length - received_size_);
+
+                                    List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
+                                    buffer.Add(residual);
+
+                                    sock_.BeginReceive(buffer, SocketFlags.None, new AsyncCallback(this.receiveBytesCb), this);
+                                }
+
+                                debug.LogDebug("[TCP] ready to receive more. TCP can receive upto {0} more bytes.",
+                                               receive_buffer_.Length - received_size_);
                             }
                         }
                         else
                         {
-                            debug.LogWarning("TCP socket closed");
-
-                            if (received_size_ - next_decoding_offset_ > 0)
-                            {
-                                debug.LogWarning("TCP buffer has {0} bytes but they failed to decode. Discarding.",
-                                                 received_size_ - next_decoding_offset_);
-                            }
+                            debug.LogWarning("[TCP] socket closed");
 
                             TransportError error = new TransportError();
                             error.type = TransportError.Type.kDisconnected;
@@ -305,13 +440,13 @@ namespace Fun
                     // When Stop is called Socket.EndReceive may return a NullReferenceException
                     if (e is ObjectDisposedException || e is NullReferenceException)
                     {
-                        debug.DebugLog1("TCP BeginReceive operation has been cancelled.");
+                        debug.LogDebug("[TCP] BeginReceive operation has been cancelled.");
                         return;
                     }
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "TCP failure in receiveBytesCb: " + e.ToString();
+                    error.message = "[TCP] failure in receiveBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -319,6 +454,9 @@ namespace Fun
 
             Socket sock_;
             HostIP addr_;
+            bool ssl_ = false;
+            int ssl_send_size_;
+            SslStream ssl_stream_ = null;
             object sock_lock_ = new object();
         }
 
@@ -355,10 +493,10 @@ namespace Fun
             {
                 addr_ = new HostIP(host, port);
 
-                debug.Log("UDP connect - {0}:{1}, {2}, {3}, Compression:{4}, Sequence:{5}, " +
-                          "ConnectionTimeout:{6}",
+                debug.Log("[UDP] {0}:{1}, {2}, {3}, Compression:{4}, Sequence:{5}, ConnectionTimeout:{6}",
                           addr_.ip, addr_.port, convertString(encoding_), convertString(option_.Encryption),
-                          option_.CompressionType, option_.SequenceValidation, option_.ConnectionTimeout);
+                          convertString(option_.CompressionType), option_.SequenceValidation,
+                          option_.ConnectionTimeout);
             }
 
             protected override void onStart ()
@@ -382,7 +520,7 @@ namespace Fun
                         sock_.Bind(new IPEndPoint(IPAddress.Any, port));
 
                     IPEndPoint lep = (IPEndPoint)sock_.LocalEndPoint;
-                    debug.DebugLog1("UDP bind - local:{0}:{1}", lep.Address, lep.Port);
+                    debug.LogDebug("[UDP] bind - local:{0}:{1}", lep.Address, lep.Port);
 
                     send_ep_ = new IPEndPoint(addr_.ip, addr_.port);
                     if (addr_.inet == AddressFamily.InterNetworkV6)
@@ -410,6 +548,8 @@ namespace Fun
                         sock_ = null;
                     }
                 }
+
+                base.onClose();
             }
 
             // Send a packet.
@@ -426,10 +566,10 @@ namespace Fun
                     int length = msg.header.Count + msg.body.Count;
                     if (length > kUdpBufferSize)
                     {
-                        string error = string.Format("'{0}' message's length is {1} bytes " +
-                                                     "but UDP single message can't bigger than {2} bytes.",
-                                                     msg.msg_type, length, kUdpBufferSize);
-                        FunDebug.Assert(false, error);
+                        debug.LogError("'{0}' message's length is {1} bytes " +
+                                       "but UDP single message can't bigger than {2} bytes.",
+                                       msg.msg_type, length, kUdpBufferSize);
+                        return;
                     }
 
                     if (msg.header.Count > 0)
@@ -444,7 +584,7 @@ namespace Fun
                         offset += msg.body.Count;
                     }
 
-                    debug.DebugLog2("UDP sending {0} bytes.", length);
+                    debug.LogDebug("[UDP] sending {0} bytes.", length);
                 }
 
                 if (offset > 0)
@@ -459,7 +599,7 @@ namespace Fun
                     }
                     catch (ObjectDisposedException)
                     {
-                        debug.DebugLog1("UDP BeginSendTo operation has been cancelled.");
+                        debug.LogDebug("[UDP] BeginSendTo operation has been cancelled.");
                     }
                 }
             }
@@ -476,9 +616,14 @@ namespace Fun
                             return;
 
                         nSent = sock_.EndSend(ar);
-                        FunDebug.Assert(nSent > 0, "UDP failed to transfer messages.");
+
+                        if (nSent <= 0)
+                        {
+                            debug.LogError("[UDP] failed to transfer messages.");
+                            return;
+                        }
                     }
-                    debug.DebugLog2("UDP sent {0} bytes.", nSent);
+                    debug.LogDebug("[UDP] sent {0} bytes.", nSent);
 
                     lock (sending_lock_)
                     {
@@ -491,9 +636,8 @@ namespace Fun
 
                         if (nSent != nLength)
                         {
-                            string error = string.Format("UDP failed to sending a whole message. " +
-                                                         "buffer:{0} sent:{1}", nLength, nSent);
-                            FunDebug.Assert(false, error);
+                            debug.LogError("[UDP] failed to sending a whole message. " +
+                                           "buffer:{0} sent:{1}", nLength, nSent);
                         }
 
                         // Checks unsent messages
@@ -502,7 +646,7 @@ namespace Fun
                 }
                 catch (ObjectDisposedException)
                 {
-                    debug.DebugLog1("UDP BeginSendTo operation has been cancelled.");
+                    debug.LogDebug("[UDP] BeginSendTo operation has been cancelled.");
                 }
                 catch (Exception e)
                 {
@@ -510,7 +654,7 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "UDP failure in sendBytesCb: " + e.ToString();
+                    error.message = "[UDP] failure in sendBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -534,7 +678,7 @@ namespace Fun
                         if (nRead > 0)
                         {
                             received_size_ += nRead;
-                            debug.DebugLog3("UDP received {0} bytes. Buffer has {1} bytes.",
+                            debug.LogDebug("[UDP] received {0} bytes. Buffer has {1} bytes.",
                                             nRead, received_size_ - next_decoding_offset_);
                         }
 
@@ -555,17 +699,17 @@ namespace Fun
                                                        SocketFlags.None, ref receive_ep_,
                                                        new AsyncCallback(this.receiveBytesCb), this);
 
-                                debug.DebugLog3("UDP ready to receive more. UDP can receive upto {0} more bytes",
+                                debug.LogDebug("[UDP] ready to receive more. UDP can receive upto {0} more bytes",
                                                 receive_buffer_.Length);
                             }
                         }
                         else
                         {
-                            debug.LogWarning("UDP socket closed");
+                            debug.LogWarning("[UDP] socket closed");
 
                             if (received_size_ - next_decoding_offset_ > 0)
                             {
-                                debug.LogWarning("UDP buffer has {0} bytes but they failed to decode. Discarding.",
+                                debug.LogWarning("[UDP] buffer has {0} bytes but they failed to decode. Discarding.",
                                                  received_size_ - next_decoding_offset_);
                             }
 
@@ -580,13 +724,13 @@ namespace Fun
                 {
                     if (e is ObjectDisposedException || e is NullReferenceException)
                     {
-                        debug.DebugLog1("UDP BeginReceiveFrom operation has been cancelled.");
+                        debug.LogDebug("[UDP] BeginReceiveFrom operation has been cancelled.");
                         return;
                     }
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "UDP failure in receiveBytesCb: " + e.ToString();
+                    error.message = "[UDP] failure in receiveBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -699,10 +843,9 @@ namespace Fun
                 HttpTransportOption http_option = (HttpTransportOption)option_;
                 using_www_ = http_option.UseWWW;
 
-                debug.Log("HTTP connect - {0}, {1}, {2}, Compression:{3}, Sequence:{4}, " +
-                          "ConnectionTimeout:{5}, UseWWW:{6}",
+                debug.Log("[HTTP] {0}, {1}, {2}, Compression:{3}, Sequence:{4}, ConnectionTimeout:{5}, UseWWW:{6}",
                           host_url_, convertString(encoding_), convertString(http_option.Encryption),
-                          http_option.CompressionType, http_option.SequenceValidation,
+                          convertString(http_option.CompressionType), http_option.SequenceValidation,
                           http_option.ConnectionTimeout, using_www_);
             }
 
@@ -719,6 +862,7 @@ namespace Fun
             protected override void onClose ()
             {
                 cancelRequest();
+                base.onClose();
             }
 
             protected override bool isSendable
@@ -769,7 +913,7 @@ namespace Fun
                 if (str_cookie_.Length > 0)
                     headers.Add(kCookieHeaderField, str_cookie_);
 
-                debug.DebugLog2("HTTP sending {0} bytes.", msg.header.Count + msg.body.Count);
+                debug.LogDebug("[HTTP] sending {0} bytes.", msg.header.Count + msg.body.Count);
 
 #if !NO_UNITY
                 // Sending a message
@@ -860,7 +1004,7 @@ namespace Fun
                             break;
                         case "set-cookie":
                             str_cookie_ = value;
-                            debug.DebugLog3("HTTP set-cookie : {0}", str_cookie_);
+                            debug.LogDebug("[HTTP] set-cookie : {0}", str_cookie_);
                             break;
                         case "content-length":
                             body_length = Convert.ToInt32(value);
@@ -915,7 +1059,7 @@ namespace Fun
                     lock (sending_lock_)
                     {
                         FunDebug.Assert(sending_.Count > 0);
-                        debug.DebugLog2("HTTP sent {0} bytes.", msg.header.Count + msg.body.Count);
+                        debug.LogDebug("[HTTP] sent {0} bytes.", msg.header.Count + msg.body.Count);
 
                         sending_.RemoveAt(0);
                     }
@@ -929,13 +1073,13 @@ namespace Fun
                         (e is ObjectDisposedException || e is NullReferenceException))
                     {
                         // When Stop is called HttpWebRequest.EndGetRequestStream may return a Exception
-                        debug.DebugLog1("HTTP request operation has been cancelled.");
+                        debug.LogDebug("[HTTP] request operation has been cancelled.");
                         return;
                     }
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "HTTP failure in requestStreamCb: " + e.ToString();
+                    error.message = "[HTTP] failure in requestStreamCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -947,7 +1091,7 @@ namespace Fun
                     Request request = (Request)ar.AsyncState;
                     if (request.was_aborted)
                     {
-                        debug.Log("HTTP responseCb - request aborted. ({0})", request.message.msg_type);
+                        debug.Log("[HTTP] responseCb - request aborted. ({0})", request.message.msg_type);
                         return;
                     }
 
@@ -984,13 +1128,13 @@ namespace Fun
                         (e is ObjectDisposedException || e is NullReferenceException))
                     {
                         // When Stop is called HttpWebRequest.EndGetResponse may return a Exception
-                        debug.DebugLog1("Http request operation has been cancelled.");
+                        debug.LogDebug("[HTTP] request operation has been cancelled.");
                         return;
                     }
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "HTTP failure in responseCb: " + e.ToString();
+                    error.message = "[HTTP] failure in responseCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1022,7 +1166,7 @@ namespace Fun
                             return;
                         }
 
-                        debug.DebugLog3("HTTP received {0} bytes.", received_size_);
+                        debug.LogDebug("[HTTP] received {0} bytes.", received_size_);
 
                         lock (receive_lock_)
                         {
@@ -1046,13 +1190,13 @@ namespace Fun
                 {
                     if (e is ObjectDisposedException || e is NullReferenceException)
                     {
-                        debug.DebugLog1("HTTP request operation has been cancelled.");
+                        debug.LogDebug("[HTTP] request operation has been cancelled.");
                         return;
                     }
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "HTTP failure in readCb: " + e.ToString();
+                    error.message = "[HTTP] failure in readCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1082,7 +1226,7 @@ namespace Fun
                     {
                         FunDebug.Assert(sending_.Count > 0);
                         FunapiMessage msg = sending_[0];
-                        debug.DebugLog2("HTTP sent a message - '{0}' ({1}bytes)",
+                        debug.LogDebug("[HTTP] sent a message - '{0}' ({1}bytes)",
                                         msg.msg_type, msg.body.Count);
 
                         sending_.RemoveAt(0);
@@ -1109,7 +1253,7 @@ namespace Fun
                         Buffer.BlockCopy(www.bytes, 0, receive_buffer_, received_size_, www.bytes.Length);
                         received_size_ += www.bytes.Length;
 
-                        debug.DebugLog3("HTTP received {0} bytes.", received_size_);
+                        debug.LogDebug("[HTTP] received {0} bytes.", received_size_);
 
                         // Parses a message
                         parseMessages();
@@ -1127,7 +1271,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kRequestFailed;
-                    error.message = "HTTP failure in wwwPost: " + e.ToString();
+                    error.message = "[HTTP] failure in wwwPost: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1234,15 +1378,12 @@ namespace Fun
             {
                 addr_ = new HostIP(host, port);
 
-                WebsocketTransportOption ws_option = (WebsocketTransportOption)option_;
-                wss_ = ws_option.WSS;
-
                 // Sets host url
-                host_url_ = string.Format("{0}://{1}:{2}/", wss_ ? "wss" : "ws", host, port);
+                host_url_ = string.Format("ws://{0}:{1}/", host, port);
 
-                debug.Log("Websocket connect - {0}, {1}, {2}, Compression:{3}, ConnectionTimeout:{4}",
+                debug.Log("[Websocket] {0}, {1}, {2}, Compression:{3}, ConnectionTimeout:{4}",
                           host_url_, convertString(encoding_), convertString(option_.Encryption),
-                          option_.CompressionType, option_.ConnectionTimeout);
+                          convertString(option_.CompressionType), option_.ConnectionTimeout);
             }
 
             protected override void onStart ()
@@ -1261,13 +1402,6 @@ namespace Fun
                     wsock_.OnError += errorCb;
                     wsock_.OnMessage += receiveBytesCb;
 
-                    // Callback function for secure connection with SSL/TLS.
-                    if (wss_)
-                    {
-                        TrustManager.LoadMozRoots();
-                        wsock_.SslConfiguration.ServerCertificateValidationCallback = TrustManager.CertValidationCallback;
-                    }
-
                     wsock_.ConnectAsync();
                 }
             }
@@ -1282,6 +1416,8 @@ namespace Fun
                         wsock_ = null;
                     }
                 }
+
+                base.onClose();
             }
 
             protected override void wireSend ()
@@ -1304,7 +1440,7 @@ namespace Fun
                         if (msg.body.Count > 0)
                             Buffer.BlockCopy(msg.body.Array, 0, buffer, msg.header.Count, msg.body.Count);
 
-                        debug.DebugLog3("Websocket sending {0} bytes.", length);
+                        debug.LogDebug("[Websocket] sending {0} bytes.", length);
                     }
 
                     lock (sock_lock_)
@@ -1319,7 +1455,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "Websocket failure in wireSend: " + e.ToString();
+                    error.message = "[Websocket] failure in wireSend: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1328,19 +1464,31 @@ namespace Fun
             {
                 state_ = State.kHandshaking;
 
-                debug.DebugLog1("Websocket transport connected. Starts handshaking..");
+                debug.LogDebug("[Websocket] transport connected. Starts handshaking..");
             }
 
             void closeCb (object sender, CloseEventArgs args)
             {
-                debug.Log("Websocket closeCb called. ({0}) {1}", args.Code, args.Reason);
+                debug.LogDebug("[Websocket] closeCb called. ({0}) {1}", args.Code, args.Reason);
+
+                CloseStatusCode code = (CloseStatusCode)args.Code;
+                if (code != CloseStatusCode.Normal && code != CloseStatusCode.NoStatus)
+                {
+                    TransportError error = new TransportError();
+                    if (state != State.kEstablished)
+                        error.type = TransportError.Type.kStartingFailed;
+                    else
+                        error.type = TransportError.Type.kDisconnected;
+                    error.message = string.Format("[Websocket] failure: {0}({1}) : {2}", code, args.Code, args.Reason);
+                    onFailure(error);
+                }
             }
 
             void errorCb (object sender, WebSocketSharp.ErrorEventArgs args)
             {
                 TransportError error = new TransportError();
                 error.type = TransportError.Type.kWebsocketError;
-                error.message = "Websocket failure: " + args.Message;
+                error.message = "[Websocket] failure: " + args.Message;
                 onFailure(error);
             }
 
@@ -1348,14 +1496,18 @@ namespace Fun
             {
                 try
                 {
-                    FunDebug.Assert(completed, "Websocket failed to transfer messages.");
+                    if (!completed)
+                    {
+                        debug.LogError("[Websocket] failed to transfer messages.");
+                        return;
+                    }
 
                     lock (sending_lock_)
                     {
                         FunDebug.Assert(sending_.Count > 0);
                         sending_.RemoveAt(0);
 
-                        debug.DebugLog3("Websocket sent 1 message.");
+                        debug.LogDebug("[Websocket] sent 1 message.");
 
                         // Sends pending messages
                         checkPendingMessages();
@@ -1365,7 +1517,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "Websocket failure in sendBytesCb: " + e.ToString();
+                    error.message = "[Websocket] failure in sendBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1385,7 +1537,7 @@ namespace Fun
                             Buffer.BlockCopy(args.RawData, 0, receive_buffer_, received_size_, args.RawData.Length);
                             received_size_ += args.RawData.Length;
 
-                            debug.DebugLog3("Websocket received {0} bytes. Buffer has {1} bytes.",
+                            debug.LogDebug("[Websocket] received {0} bytes. Buffer has {1} bytes.",
                                             args.RawData.Length, received_size_ - next_decoding_offset_);
 
                             // Parses messages
@@ -1393,11 +1545,11 @@ namespace Fun
                         }
                         else
                         {
-                            debug.LogWarning("Websocket socket closed");
+                            debug.LogWarning("[Websocket] socket closed");
 
                             if (received_size_ - next_decoding_offset_ > 0)
                             {
-                                debug.LogWarning("Websocket buffer has {0} bytes but they failed to decode. Discarding.",
+                                debug.LogWarning("[Websocket] buffer has {0} bytes but they failed to decode. Discarding.",
                                                  received_size_ - next_decoding_offset_);
                             }
 
@@ -1412,7 +1564,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "Websocket failure in receiveBytesCb: " + e.ToString();
+                    error.message = "[Websocket] failure in receiveBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1420,7 +1572,6 @@ namespace Fun
 
             HostIP addr_;
             string host_url_;
-            bool wss_ = false;
             WebSocket wsock_;
             object sock_lock_ = new object();
         }

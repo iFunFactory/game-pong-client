@@ -18,7 +18,7 @@ namespace Fun
     public class FunapiVersion
     {
         public static readonly int kProtocolVersion = 1;
-        public static readonly int kPluginVersion = 261;
+        public static readonly int kPluginVersion = 277;
     }
 
 
@@ -91,6 +91,9 @@ namespace Fun
                     {
                         string path = Application.dataPath;
                         path_ = path.Substring(0, path.LastIndexOf('/')) + "/Data";
+
+                        if (!System.IO.Directory.Exists(path_))
+                            System.IO.Directory.CreateDirectory(path_);
                     }
                     else
                     {

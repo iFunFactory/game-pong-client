@@ -19,7 +19,7 @@ namespace Fun
     {
         public void Init ()
         {
-            FunDebug.DebugLog1("FacebookConnector.Init called.");
+            FunDebug.LogDebug("FacebookConnector.Init called.");
 
             if (!FB.IsInitialized)
             {
@@ -123,7 +123,7 @@ namespace Fun
 
         void OnHideCb (bool isGameShown)
         {
-            FunDebug.DebugLog1("isGameShown: {0}", isGameShown);
+            FunDebug.LogDebug("isGameShown: {0}", isGameShown);
         }
 
         void OnLoginCb (ILoginResult result)
@@ -161,7 +161,7 @@ namespace Fun
 
         void OnMyProfileCb (IGraphResult result)
         {
-            FunDebug.DebugLog1("FacebookConnector.OnMyProfileCb called.");
+            FunDebug.LogDebug("FacebookConnector.OnMyProfileCb called.");
             if (result.Error != null)
             {
                 FunDebug.LogError(result.Error);
@@ -236,7 +236,7 @@ namespace Fun
                         user.url = picture["url"] as string;
 
                         friend_list_.Add(user);
-                        FunDebug.DebugLog1("> id:{0} name:{1} image:{2}", user.id, user.name, user.url);
+                        FunDebug.LogDebug("> id:{0} name:{1} image:{2}", user.id, user.name, user.url);
                     }
                 }
 
@@ -293,7 +293,7 @@ namespace Fun
                         user.url = url;
 
                         invite_list_.Add(user);
-                        FunDebug.DebugLog1(">> id:{0} name:{1} image:{2}", user.id, user.name, user.url);
+                        FunDebug.LogDebug(">> id:{0} name:{1} image:{2}", user.id, user.name, user.url);
                     }
                 }
 
@@ -345,7 +345,7 @@ namespace Fun
 
         void PostCallback (IGraphResult result)
         {
-            FunDebug.DebugLog1("FacebookConnector.PostCallback called.");
+            FunDebug.LogDebug("FacebookConnector.PostCallback called.");
             if (result.Error != null)
             {
                 FunDebug.LogError(result.Error);
