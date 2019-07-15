@@ -447,6 +447,7 @@ public class NetworkManager : Singleton<NetworkManager>
                 break;
 
             case "ranklist":
+            case "ranklist_single":
                 GameLogic.Instance.RecordlistMessageReceived(encoding, body);
                 break;
 
