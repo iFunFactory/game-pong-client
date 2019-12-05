@@ -192,19 +192,22 @@ public class Menu : MonoBehaviour
         if (encoding == FunEncoding.kJson)
         {
             Dictionary<string, object> message = body as Dictionary<string, object>;
-            Dictionary<string, object> rank = message["ranks"] as Dictionary<string, object>;
-            var count = rank.Count;
-
-            for (int i = 0; i < count; i++)
+            if (message.ContainsKey("ranks"))
             {
-                Dictionary<string, object> subMessage = rank[i.ToString()] as Dictionary<string, object>;
-                string gameObjectName = string.Format("User{0}", i + 1);
-                Text textComponent = usersTransform.Find(gameObjectName).transform.GetComponentInChildren<Text>();
+              Dictionary<string, object> rank = message["ranks"] as Dictionary<string, object>;
+              var count = rank.Count;
 
-                textComponent.text = string.Format("{0}위 : {1}연승\nid: {2} ",
-                    subMessage["rank"],
-                    subMessage["score"],
-                    subMessage["id"]);
+              for (int i = 0; i < count; i++)
+              {
+                  Dictionary<string, object> subMessage = rank[i.ToString()] as Dictionary<string, object>;
+                  string gameObjectName = string.Format("User{0}", i + 1);
+                  Text textComponent = usersTransform.Find(gameObjectName).transform.GetComponentInChildren<Text>();
+
+                  textComponent.text = string.Format("{0}위 : {1}연승\nid: {2} ",
+                      subMessage["rank"],
+                      subMessage["score"],
+                      subMessage["id"]);
+              }
             }
         }
         else
