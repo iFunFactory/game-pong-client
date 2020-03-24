@@ -48,7 +48,7 @@ namespace Fun
             ip_list_ = Dns.GetHostAddresses(host);
             if (ip_list_ == null || ip_list_.Length == 0)
             {
-                FunDebug.LogWarning("HostIP - Can't get any ip address from '{0}'.", host);
+                FunDebug.LogWarning("HostIP - Can't get any host address from '{0}'.", host);
                 return false;
             }
 

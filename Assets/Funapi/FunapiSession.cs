@@ -73,7 +73,6 @@ namespace Fun
 
             // Sets the debug log instance.
             debug.SetDebugObject(this);
-            cmd_list_.debug = debug;
             response_timeout_.debugLog = debug;
 
             // Sets member variables.
@@ -100,6 +99,7 @@ namespace Fun
                 stopAll(true);
             }
 
+            cmd_list_.Clear();
             event_.Add(releaseMonoListener);
         }
 
@@ -167,6 +167,31 @@ namespace Fun
             addCommand(new CmdStopAll(this));
         }
 
+        public void CloseRequest ()
+        {
+            if (!Connected)
+            {
+                debug.Log("Session.CloseRequest() is called but the session is not connected.");
+                return;
+            }
+
+            Transport transport = GetTransport();
+            if (transport == null)
+            {
+                debug.LogWarning("Session.CloseRequest() is called but can't find a default transport.");
+                return;
+            }
+
+            if (transport.encoding == FunEncoding.kJson)
+            {
+                SendMessage(kCloseSessionType, FunapiMessage.Deserialize("{}"), transport.protocol);
+            }
+            else if (transport.encoding == FunEncoding.kProtobuf)
+            {
+                SendMessage(kCloseSessionType, new FunMessage(), transport.protocol);
+            }
+        }
+
 
         //
         // FunapiMono.Listener-related functions
@@ -188,6 +213,10 @@ namespace Fun
 
         public override void OnPause (bool isPaused)
         {
+#if UNITY_EDITOR
+            if (UnityEditor.EditorApplication.isPaused)
+                return;
+#endif
             if (!Started)
                 return;
 
@@ -254,9 +283,13 @@ namespace Fun
 
             Transport transport = GetTransport(protocol);
 
-            if (transport != null &&
-                (transport.IsReliable || transport.IsEstablished) &&
-                (!wait_for_redirect_ || msg_type == kRedirectConnectType))
+            // 메시지를 전송 가능한 상태인지 검사
+            // session reliabiliby 를 사용할 경우 연결이 끊긴 상태에서도 SendMessage를 호출하면 메시지를 저장해두었다가 다시 연결됐을 때 전송
+
+            if (transport != null &&                                                    // 해당 프로토콜 타입의 Transport 가 있음
+                (transport.IsReliable || transport.IsEstablished) &&                    // session reliabiliby 를 사용중이거나 연결된 상태
+                (!wait_for_redirect_ || msg_type == kRedirectConnectType) &&            // 서버 이동 중이 아니거나 서버 이동 메시지
+                (transport.encoding == FunEncoding.kJson || message is FunMessage))     // Protobuf 일 경우 메시지 타입이 FunMessage 인지 확인
             {
                 FunapiMessage msg = null;
                 if (transport.encoding == FunEncoding.kJson)
@@ -279,7 +312,9 @@ namespace Fun
                 else if (transport == null)
                     strlog.AppendFormat("There's no {0} transport.", convertString(protocol));
                 else if (!transport.IsEstablished)
-                    strlog.AppendFormat(" {0}:{1}", transport.str_protocol, transport.state);
+                    strlog.AppendFormat("{0}:{1}", transport.str_protocol, transport.state);
+                else if (transport.encoding == FunEncoding.kProtobuf && message is FunMessage == false)
+                    strlog.Append("The message type is not FunMessage.");
                 strlog.AppendFormat(" session:{0}", state_);
 
                 debug.LogWarning(strlog.ToString());
@@ -362,21 +397,20 @@ namespace Fun
         {
             if (transport == null)
             {
-                debug.LogDebug("Session.Connect() called but the transport is null.");
+                debug.LogDebug("[Session] Connect - transport is null.");
                 return false;
             }
 
             if (!Started)
             {
-                debug.LogDebug("Session.Connect({0}) called.", transport.str_protocol);
-
                 state = State.kStarted;
+                debug.LogDebug("[Session] Starting the session.");
             }
 
             if (transport.Connected)
             {
-                debug.LogWarning("Session.Connect({0}) called but {1} has been already connected.",
-                                 transport.str_protocol, transport.str_protocol);
+                debug.LogWarning("[Session] Connect - {0} has been already connected.",
+                                 transport.str_protocol);
                 return false;
             }
 
@@ -389,25 +423,24 @@ namespace Fun
         {
             if (transport == null)
             {
-                debug.LogDebug("Session.Stop() called but the transport is null.");
+                debug.LogDebug("[Session] Stop - transport is null.");
                 return false;
             }
 
             if (!Started)
             {
-                debug.LogWarning("Session.Stop({0}) called but the session is not connected.",
-                                 transport.str_protocol);
                 return false;
             }
 
             if (transport.IsStopped)
             {
-                debug.LogWarning("Session.Stop({0}) called but {1} hasn't been connected.",
-                                 transport.str_protocol, transport.str_protocol);
+                debug.LogWarning("[Session] Stop - {0} has been already stopped.",
+                                 transport.str_protocol);
                 return false;
             }
 
-            debug.LogDebug("Session.Stop({0}) called. (state:{1})", transport.str_protocol, state_);
+            debug.LogDebug("[Session] Stopping {0} transport. (state:{1})",
+                           transport.str_protocol, state_);
 
             if (!transport.Connected)
             {
@@ -432,7 +465,7 @@ namespace Fun
             if (state == State.kWaitForStop)
                 return false;
 
-            debug.LogDebug("Session.StopAll() called. (state:{0})", state_);
+            debug.LogDebug("[Session] Stopping all. (state:{0})", state_);
 
             state = State.kWaitForStop;
 
@@ -465,13 +498,22 @@ namespace Fun
             lock (transports_lock_)
             {
                 transports_.Clear();
-                debug.Log("[Redirect] Removes all transports.");
+                debug.LogDebug("[Redirect] Removes all transports.");
             }
 
             onSessionClosed();
 
             server_address_ = host;
             default_protocol_ = TransportProtocol.kDefault;
+
+            // Applying the required options to create the transport first.
+            if (redirect_option_ != null)
+            {
+                option_.sessionReliability = redirect_option_.sessionReliability;
+                option_.sendSessionIdOnlyOnce = redirect_option_.sendSessionIdOnlyOnce;
+                option_.delayedAckInterval = redirect_option_.delayedAckInterval;
+                option_.encryptionPublicKey = redirect_option_.encryptionPublicKey;
+            }
 
             // Adds transports.
             foreach (RedirectInfo info in redirect_list_.Values)
@@ -519,8 +561,8 @@ namespace Fun
             if (transport == null || token.Length <= 0)
                 return;
 
-            debug.Log("[Redirect] {0} sending the redirect token to the other server.",
-                      transport.str_protocol);
+            debug.LogDebug("[Redirect] {0} sending the token to the other server.",
+                           transport.str_protocol);
             debug.LogDebug("[Redirect] token: {0}", token);
 
             if (transport.encoding == FunEncoding.kJson)
@@ -573,6 +615,11 @@ namespace Fun
         public TransportProtocol DefaultProtocol
         {
             get { return default_protocol_; }
+        }
+
+        public SessionId Id
+        {
+            get { return session_id_; }
         }
 
         public string GetSessionId ()
@@ -810,6 +857,17 @@ namespace Fun
                 SessionEventCallback(type, session_id_);
         }
 
+        SessionOption getSessionOption (string flavor)
+        {
+            SessionOption option = null;
+
+            // Get option from session option callback.
+            if (SessionOptionCallback != null)
+                option = SessionOptionCallback(flavor);
+
+            return option;
+        }
+
 
         //
         // Transport-related functions
@@ -817,32 +875,26 @@ namespace Fun
         Transport createTransport (TransportProtocol protocol, FunEncoding encoding,
                                    UInt16 port, TransportOption option = null)
         {
-            Transport transport = null;
-
             if (option == null)
             {
                 if (protocol == TransportProtocol.kTcp)
                     option = new TcpTransportOption();
                 else if (protocol == TransportProtocol.kHttp)
                     option = new HttpTransportOption();
+                else if (protocol == TransportProtocol.kWebsocket)
+                    option = new WebsocketTransportOption();
                 else
                     option = new TransportOption();
-
-                transport = getTransport(protocol, encoding, port, option);
-                if (transport != null)
-                    return transport;
-            }
-            else
-            {
-                transport = getTransport(protocol, encoding, port, option);
-                if (transport != null)
-                    return transport;
             }
 
             if (option_.sessionReliability && protocol == TransportProtocol.kTcp)
                 option.ReliableTransport = true;
             else
                 option.ReliableTransport = false;
+
+            Transport transport = getTransport(protocol, encoding, port, option);
+            if (transport != null)
+                return transport;
 
             try
             {
@@ -876,6 +928,7 @@ namespace Fun
                 transport.ErrorCallback += onTransportError;
                 transport.ReceivedCallback += onTransportMessage;
                 transport.mono = this;
+                transport.session = this;
 
                 transport.Init();
 
@@ -890,10 +943,12 @@ namespace Fun
 
             reliable_protocol_ = getTheMostReliableProtocol();
 
-            if (default_protocol_ == TransportProtocol.kDefault)
+            if (default_protocol_ == TransportProtocol.kDefault ||
+                default_protocol_ != reliable_protocol_)
+            {
                 default_protocol_ = reliable_protocol_;
+            }
 
-            debug.LogDebug("{0} transport has been created.", transport.str_protocol);
             return transport;
         }
 
@@ -1144,7 +1199,7 @@ namespace Fun
             {
                 if (transports_.Count > 1)
                 {
-                    debug.Log("The default protocol is '{0}'", convertString(default_protocol_));
+                    debug.Log("[Session] default protocol: {0}", convertString(default_protocol_));
                 }
             }
         }
@@ -1167,9 +1222,6 @@ namespace Fun
             state = State.kUnknown;
 
             response_timeout_.Clear();
-
-            if (!wait_for_redirect_)
-                cmd_list_.Clear();
 
             onSessionEvent(SessionEventType.kStopped);
         }
@@ -1211,7 +1263,7 @@ namespace Fun
 
             case kSessionClosedType:
                 {
-                    debug.LogWarning("Session has been closed by server.");
+                    debug.LogWarning("[Session] Closed by server.");
 
                     if (wait_for_redirect_)
                         return;
@@ -1238,6 +1290,9 @@ namespace Fun
                 if (MulticastMessageCallback != null)
                     MulticastMessageCallback(msg_type, message);
                 break;
+
+            case kAckMessageType:
+                return;
 
             default:
                 {
@@ -1281,7 +1336,7 @@ namespace Fun
                     object tags = json_helper_.GetObject(message, "current_tags");
                     int length = json_helper_.GetArrayCount(tags);
                     StringBuilder log = new StringBuilder();
-                    log.Append("[Redirect] current tag [");
+                    log.Append("[Redirect] Current tags [");
 
                     for (int i = 0; i < length; ++i)
                     {
@@ -1300,7 +1355,7 @@ namespace Fun
                     object tags = json_helper_.GetObject(message, "target_tags");
                     int length = json_helper_.GetArrayCount(tags);
                     StringBuilder log = new StringBuilder();
-                    log.Append("[Redirect] target tag [");
+                    log.Append("[Redirect] Target tags [");
 
                     for (int i = 0; i < length; ++i)
                     {
@@ -1347,7 +1402,7 @@ namespace Fun
                     redirect_cur_tags_.AddRange(redirect.current_tags);
 
                     StringBuilder log = new StringBuilder();
-                    log.AppendFormat("[Redirect] current tag [");
+                    log.AppendFormat("[Redirect] Current tags [");
 
                     int count = redirect_cur_tags_.Count;
                     for (int i = 0; i < count; ++i)
@@ -1366,7 +1421,7 @@ namespace Fun
                     redirect_target_tags_.AddRange(redirect.target_tags);
 
                     StringBuilder log = new StringBuilder();
-                    log.AppendFormat("[Redirect] target tag [");
+                    log.AppendFormat("[Redirect] Target tags [");
 
                     int count = redirect_target_tags_.Count;
                     for (int i = 0; i < count; ++i)
@@ -1409,6 +1464,7 @@ namespace Fun
             }
 
             redirect_token_ = token;
+            redirect_option_ = getSessionOption(flavor);
             wait_for_redirect_ = true;
 
             // Stopping all transports.
@@ -1417,7 +1473,15 @@ namespace Fun
                 foreach (Transport transport in transports_.Values)
                 {
                     transport.IsRedirecting = true;
-                    transport.Stop();
+
+                    if (!option_.sessionReliability)
+                    {
+                        transport.Stop();
+                    }
+                    else
+                    {
+                        StartCoroutine(tryToStopTransport(transport));
+                    }
                 }
             }
 
@@ -1461,9 +1525,12 @@ namespace Fun
                 state = State.kConnected;
                 wait_for_redirect_ = false;
 
-                debug.Log("The default protocol is '{0}'", convertString(default_protocol_));
+                if (redirect_option_ != null)
+                {
+                    option_ = redirect_option_;
+                }
 
-                onSessionEvent(SessionEventType.kRedirectSucceeded);
+                onSessionEventCallback(SessionEventType.kRedirectSucceeded);
             }
             else
             {
@@ -1747,11 +1814,16 @@ namespace Fun
         const string kIntMessageType = "_int#";
         const string kMessageTypeField = "_msgtype";
         const string kSessionIdField = "_sid";
+        const string kUdpHandshakeIdField = "_udp_handshake_id";
         const string kSeqNumberField = "_seq";
         const string kAckNumberField = "_ack";
         const string kEmptyMessageType = "_empty";
+        const string kAckMessageType = "_ack";
         const string kSessionOpenedType = "_session_opened";
+        const string kUdpHandShakeType = "_udp_handshake";
+        const string kUdpAttachedType = "_udp_attached";
         const string kSessionClosedType = "_session_closed";
+        const string kCloseSessionType = "_close_session";
         const string kMaintenanceType = "_maintenance";
         const string kMulticastMsgType = "_multicast";
         const string kRedirectType = "_sc_redirect";
@@ -1759,7 +1831,8 @@ namespace Fun
 
         // Funapi message-related events.
         public event Action<SessionEventType, string> SessionEventCallback;                     // type, session id
-        public event Func<string, TransportProtocol, TransportOption> TransportOptionCallback;  // flavor, protocol (return: option)
+        public event Func<string, SessionOption> SessionOptionCallback;                         // flavor, (return: session option)
+        public event Func<string, TransportProtocol, TransportOption> TransportOptionCallback;  // flavor, protocol (return: transport option)
         public event Func<TransportProtocol, FunapiCompressor> CreateCompressorCallback;        // protocol (return: compressor)
         public event Action<TransportProtocol, TransportEventType> TransportEventCallback;      // protocol, type
         public event Action<TransportProtocol, TransportError> TransportErrorCallback;          // protocol, error
@@ -1804,6 +1877,7 @@ namespace Fun
         SessionOption option_ = null;
 
         // Redirect-related variables.
+        SessionOption redirect_option_ = null;
         bool wait_for_redirect_ = false;
         string redirect_token_ = "";
         List<string> redirect_cur_tags_ = new List<string>();
@@ -1827,7 +1901,7 @@ namespace Fun
     }
 
 
-    // This class is for saving unsent messages
+    // This is used to save unsent messages during redirection.
     public class UnsentMessage
     {
         public UnsentMessage (string type, object msg, EncryptionType enc)

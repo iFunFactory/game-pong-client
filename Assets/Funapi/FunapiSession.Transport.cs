@@ -4,7 +4,9 @@
 // must not be used, disclosed, copied, or distributed without the prior
 // consent of iFunFactory Inc.
 
+using Fun;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 
@@ -49,6 +51,7 @@ namespace Fun
             kStartingFailed,
             kConnectionTimeout,
             kEncryptionFailed,
+            kDeserializeFailed,
             kSendingFailed,
             kReceivingFailed,
             kRequestFailed,
@@ -67,7 +70,7 @@ namespace Fun
         public FunCompressionType CompressionType = FunCompressionType.kNone;
         public bool ReliableTransport = false;
         public bool SequenceValidation = false;
-        public float ConnectionTimeout = 0f;
+        public float ConnectionTimeout = 10f;
 
         public override bool Equals (object obj)
         {
@@ -149,6 +152,42 @@ namespace Fun
         }
     }
 
+    public class WebsocketTransportOption : TransportOption
+    {
+        public bool WSS = false;
+        public bool EnablePing = false;
+        public bool EnablePingLog = false;
+        public int PingIntervalSeconds = 0;
+        public float PingTimeoutSeconds = 0f;
+
+        public void SetPing (int interval, float timeout, bool enable_log = false)
+        {
+            EnablePing = true;
+            EnablePingLog = enable_log;
+            PingIntervalSeconds = interval;
+            PingTimeoutSeconds = timeout;
+        }
+
+        public override bool Equals (object obj)
+        {
+            if (obj == null || !base.Equals(obj) || !(obj is WebsocketTransportOption))
+                return false;
+
+            WebsocketTransportOption option = obj as WebsocketTransportOption;
+
+            return WSS == option.WSS &&
+                   EnablePing == option.EnablePing &&
+                   EnablePingLog == option.EnablePingLog &&
+                   PingIntervalSeconds == option.PingIntervalSeconds &&
+                   PingTimeoutSeconds == option.PingTimeoutSeconds;
+
+        }
+
+        public override int GetHashCode ()
+        {
+            return base.GetHashCode ();
+        }
+    }
 
 
     public partial class FunapiSession
@@ -192,12 +231,12 @@ namespace Fun
                 {
                     if (state_ != State.kUnknown)
                     {
-                        debug.LogWarning("{0} Start() called, but this transport already started. ({1})",
+                        debug.LogWarning("[{0}] Start called but the transport already started. ({1})",
                                          str_protocol_, state_);
                         return;
                     }
 
-                    debug.LogDebug("{0} starting transport.", str_protocol_);
+                    debug.LogDebug("[{0}] Starting the transport.", str_protocol_);
                     setConnectionTimeout();
 
                     onStart();
@@ -206,7 +245,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kStartingFailed;
-                    error.message = string.Format("{0} failure in Start: {1}", str_protocol_, e.ToString());
+                    error.message = string.Format("[{0}] Failure in Start: {1}", str_protocol_, e.ToString());
                     onFailure(error);
                 }
             }
@@ -217,10 +256,11 @@ namespace Fun
                 if (state_ == State.kUnknown)
                     return;
 
-                debug.LogDebug("{0} stopping transport. (state:{1})", str_protocol_, state_);
+                debug.LogDebug("[{0}] Stopping transport. (state:{1})", str_protocol_, state_);
 
                 state_ = State.kUnknown;
                 cstate_ = ConnectState.kUnknown;
+                is_connection_timed_out_ = false;
 
                 decodeMessages();
 
@@ -252,9 +292,9 @@ namespace Fun
                 }
 
                 if (seq_ == 0)
-                    debug.LogDebug("{0} has been started.", str_protocol_);
+                    debug.LogDebug("[{0}] Established.", str_protocol_);
                 else
-                    debug.LogDebug("{0} has been started. (seq:{1})", str_protocol_, seq_);
+                    debug.LogDebug("[{0}] Established. (seq:{1})", str_protocol_, seq_);
 
                 if (enable_ping_)
                     startPingTimer();
@@ -297,7 +337,7 @@ namespace Fun
                     {
                         unsent_queue_.Enqueue(msg);
 
-                        debug.Log("{0} - '{1}' message queued. state:{2}",
+                        debug.Log("[{0}] - '{1}' message queued. state:{2}",
                                   str_protocol_, msg.msg_type, state_);
                     }
                 }
@@ -323,6 +363,8 @@ namespace Fun
             // Properties
             //
             public FunapiMono.Listener mono { protected get; set; }
+
+            public FunapiSession session { protected get; set; }
 
             public abstract HostAddr address { get; }
 
@@ -500,10 +542,30 @@ namespace Fun
             {
                 TransportError error = new TransportError();
                 error.type = TransportError.Type.kDisconnected;
-                error.message = string.Format("{0} forcibly closed the connection for testing.",
+                error.message = string.Format("[{0}] The connection will be forcibly closed.",
                                               str_protocol_);
                 onDisconnected(error);
             }
+
+            public void ForcedFail ()
+            {
+                TransportError error = new TransportError();
+                error.type = TransportError.Type.kSendingFailed;
+                error.message = string.Format("{0} The connection will be forcibly closed.",
+                                              str_protocol_);
+                onFailure(error);
+            }
+
+            public void ForcedException ()
+            {
+                TransportError error = new TransportError();
+                error.type = TransportError.Type.kReceivingFailed;
+                error.message = string.Format("{0} The connection will be forcibly closed." +
+                                              " (System.Net.Sockets.SocketException)",
+                                              str_protocol_);
+                onFailure(error);
+            }
+
 
             // Creates a socket.
             protected virtual void onStart ()
@@ -522,6 +584,7 @@ namespace Fun
                     next_decoding_offset_ = 0;
                 }
 
+                udp_handshake_id_ = Guid.NewGuid();
                 last_error_code_ = TransportError.Type.kNone;
                 last_error_message_ = "";
             }
@@ -575,18 +638,28 @@ namespace Fun
                     enable_ping_ = tcp_option.EnablePing;
                     enable_ping_log_ = tcp_option.EnablePingLog;
                 }
+                else if (protocol_ == TransportProtocol.kWebsocket)
+                {
+                    WebsocketTransportOption websocket_option = opt as WebsocketTransportOption;
+                    enable_ping_ = websocket_option.EnablePing;
+                    enable_ping_log_ = websocket_option.EnablePingLog;
+                }
 
                 if (opt.Encryption != EncryptionType.kDefaultEncryption)
                 {
                     setEncryption(opt.Encryption);
-                    debug.Log("{0} encrypt type: {1}", str_protocol_, convertString(opt.Encryption));
+                    debug.Log("[{0}] Encrypt type: {1}", str_protocol_, convertString(opt.Encryption));
                 }
             }
 
             void setConnectionTimeout ()
             {
                 if (option_.ConnectionTimeout <= 0f)
+                {
+                    FunDebug.LogWarning("Connection timeout is disabled(0), Disabling timeout would cause the infinite waiting state." +
+                                        " It is recommended that you use it only for debugging purposes.");
                     return;
+                }
 
                 timer_.Add(new FunapiTimeoutTimer("connection",
                                                   option_.ConnectionTimeout,
@@ -635,8 +708,13 @@ namespace Fun
                 if (state_ == State.kUnknown || state_ == State.kEstablished)
                     return;
 
+                lock (start_lock_)
+                {
+                    is_connection_timed_out_ = true;
+                }
+
                 last_error_code_ = TransportError.Type.kConnectionTimeout;
-                last_error_message_ = string.Format("{0} Connection waiting time has been exceeded.",
+                last_error_message_ = string.Format("[{0}] Connection waiting time has been exceeded.",
                                                     str_protocol_);
                 debug.LogWarning(last_error_message_);
 
@@ -659,7 +737,7 @@ namespace Fun
                     last_error_code_ = error.type;
                     last_error_message_ = error.message;
 
-                    debug.LogWarning("{0} disconnected - state: {1}, error: {2}\n{3}\n",
+                    debug.LogWarning("[{0}] Disconnected. state: {1}, error: {2}\n{3}\n",
                                      str_protocol_, state_, error.type, error.message);
 
                     if (ErrorCallback != null)
@@ -682,17 +760,16 @@ namespace Fun
                     last_error_code_ = error.type;
                     last_error_message_ = error.message;
 
-                    debug.LogWarning("{0} error occurred - state: {1}, error: {2}\n{3}\n",
-                                    str_protocol_, state_, error.type, error.message);
+                    debug.LogWarning(error.message);
 
                     if (ErrorCallback != null)
                         ErrorCallback(protocol_, error);
 
-                    if (state_ != State.kEstablished)
+                    if (auto_reconnect_ && !redirecting_)
                     {
-                        if (auto_reconnect_ && !redirecting_)
+                        if (state_ != State.kEstablished || last_error_message_.Contains("SocketException"))
                         {
-                            debug.Log("{0} connection failed. will try to connect again. " +
+                            debug.Log("[{0}] Error occurred. It will try to reconnect. " +
                                       "(state: {1}, error: {2})\n{3}\n",
                                       str_protocol_, state_, error.type, error.message);
 
@@ -701,12 +778,8 @@ namespace Fun
                         }
                     }
 
-                    // If an error occurs during connection, stops the connection.
-                    // Or if an error occurs while connected from not UDP, stops the connection.
-                    if (state_ != State.kEstablished || protocol_ != TransportProtocol.kUdp)
-                    {
-                        event_.Add(Stop);
-                    }
+                    // If an error occurs, stops the connection.
+                    event_.Add(Stop);
                 });
             }
 
@@ -743,8 +816,8 @@ namespace Fun
                 if (exponential_time_ < 8f)
                     exponential_time_ *= 2f;
 
-                debug.Log("Wait {0} seconds for reconnect to {1} transport.",
-                          delay_time, str_protocol_);
+                debug.Log("[{0}] Wait {1} second(s) for reconnecting.",
+                          str_protocol_, delay_time);
 
                 timer_.Add(new FunapiTimer("reconnect", delay_time, onStart));
 
@@ -765,16 +838,10 @@ namespace Fun
                         if (sendingFirst)
                         {
                             first_.Add(msg);
-
-                            debug.LogDebug("{0} adds '{1}' message to first list.",
-                                           str_protocol_, msg.msg_type);
                         }
                         else
                         {
                             pending_.Add(msg);
-
-                            debug.LogDebug("{0} adds '{1}' message to pending list.",
-                                           str_protocol_, msg.msg_type);
                         }
 
                         if (Connected && isSendable)
@@ -785,7 +852,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = string.Format("{0} failure in sendMessage: {1}",
+                    error.message = string.Format("[{0}] Failure in sendMessage: {1}",
                                                   str_protocol_, e.ToString());
                     onFailure(error);
                 }
@@ -793,39 +860,81 @@ namespace Fun
 
             void sendEmptyMessage ()
             {
-                debug.LogDebug("{0} sending a empty message.", str_protocol_);
+                sendMessage(new FunapiMessage(protocol_, kEmptyMessageType, new FunMessage()), true);
+            }
 
-                if (encoding_ == FunEncoding.kJson)
+            void sendUdpEmptyMessage()
+            {
+                lock (sending_lock_)
                 {
-                    sendMessage(new FunapiMessage(protocol_, kEmptyMessageType,
-                                                  FunapiMessage.Deserialize("{}")), true);
-                }
-                else if (encoding_ == FunEncoding.kProtobuf)
-                {
-                    sendMessage(new FunapiMessage(protocol_, kEmptyMessageType,
-                                                  new FunMessage()), true);
+                    if (encoding_ == FunEncoding.kJson)
+                    {
+                        first_.Add(new FunapiMessage(protocol_,
+                                                     kUdpHandShakeType,
+                                                     FunapiMessage.Deserialize("{}"),
+                                                     EncryptionType.kDefaultEncryption));
+                    }
+                    else if (encoding_ == FunEncoding.kProtobuf)
+                    {
+                        first_.Add(new FunapiMessage(protocol_,
+                                                     kUdpHandShakeType,
+                                                     new FunMessage(),
+                                                     EncryptionType.kDefaultEncryption));
+                    }
+                    if (isSendable)
+                    {
+                        sendPendingMessages();
+                    }
                 }
             }
 
-            void sendAck (UInt32 ack, bool sendingFirst = false)
+            protected IEnumerator tryToSendUdpEmptyMessage()
             {
-                debug.LogDebug("{0} sending a ack - {1}", str_protocol_, ack);
+                if (session.Id.IsValid)
+                {
+                    session_id_.SetId(session.GetSessionId());
+                }
+                else
+                {
+                    session_id_.Clear();
+                }
 
+                exponential_time_ = 1f;
+
+                while (true)
+                {
+                    if (IsEstablished || IsStopped)
+                    {
+                        exponential_time_ = 0f;
+                        yield break;
+                    }
+
+                    sendUdpEmptyMessage();
+
+                    // 0.1, 0.2, 0.4, 0.8, 0.8, ...
+                    float delay_time = exponential_time_;
+                    if (exponential_time_ < 8f)
+                        exponential_time_ *= 2f;
+
+                    yield return new SleepForSeconds(delay_time / 10f);
+                }
+            }
+
+           void sendAck (UInt32 ack, bool sendingFirst = false)
+            {
                 if (encoding_ == FunEncoding.kJson)
                 {
                     object message = FunapiMessage.Deserialize("{}");
                     json_helper_.SetIntegerField(message, kAckNumberField, ack);
 
-                    sendMessage(new FunapiMessage(protocol_, kAckNumberField,
-                                                  message), sendingFirst);
+                    sendMessage(new FunapiMessage(protocol_, kAckNumberField, message), sendingFirst);
                 }
                 else if (encoding_ == FunEncoding.kProtobuf)
                 {
                     FunMessage message = new FunMessage();
                     message.ack = ack;
 
-                    sendMessage(new FunapiMessage(protocol_, kAckNumberField,
-                                                  message), sendingFirst);
+                    sendMessage(new FunapiMessage(protocol_, kAckNumberField, message), sendingFirst);
                 }
 
                 sent_ack_ = ack;
@@ -838,14 +947,11 @@ namespace Fun
                     if (unsent_queue_.Count <= 0)
                         return;
 
-                    debug.LogDebug("{0} has {1} unsent message(s).",
+                    debug.LogDebug("[{0}] {1} unsent message(s).",
                                    str_protocol_, unsent_queue_.Count);
 
                     foreach (FunapiMessage msg in unsent_queue_)
                     {
-                        debug.LogDebug("{0} sending a unsent message - '{1}'",
-                                       str_protocol_, msg.msg_type);
-
                         sendMessage(msg);
                     }
 
@@ -867,8 +973,6 @@ namespace Fun
             //---------------------------------------------------------------------
             bool onSeqReceived (UInt32 seq)
             {
-                debug.LogDebug("{0} received sequence number - {1}", str_protocol_, seq);
-
                 if (first_seq_)
                 {
                     first_seq_ = false;
@@ -877,14 +981,14 @@ namespace Fun
                 {
                     if (!seqLess(last_seq_, seq))
                     {
-                        debug.LogWarning("Last sequence number is {0} but {1} received. Skipping message.",
-                                         last_seq_, seq);
+                        debug.LogWarning("[{0}] Last sequence number is {1} but {2} received. Skipping message.",
+                                         str_protocol_, last_seq_, seq);
                         return false;
                     }
                     else if (seq != last_seq_ + 1)
                     {
-                        debug.LogWarning("Received wrong sequence number {0}. {1} expected.",
-                                         seq, last_seq_ + 1);
+                        debug.LogWarning("[{0}] Received wrong sequence number {1}. {2} expected.",
+                                         str_protocol_, seq, last_seq_ + 1);
 
                         Stop();
                         return false;
@@ -904,24 +1008,22 @@ namespace Fun
                 if (!Connected)
                     return;
 
-                debug.LogDebug("{0} received ack number - {1}", str_protocol_, ack);
-
                 lock (sending_lock_)
                 {
                     if (sent_queue_.Count > 0)
-                        debug.LogDebug("The send queue has {0} message(s).", sent_queue_.Count);
-
-                    while (sent_queue_.Count > 0)
                     {
-                        FunapiMessage msg = sent_queue_.Peek();
+                        while (sent_queue_.Count > 0)
+                        {
+                            FunapiMessage msg = sent_queue_.Peek();
 
-                        if (seqLess(msg.seq, ack))
-                        {
-                            sent_queue_.Dequeue();
-                        }
-                        else
-                        {
-                            break;
+                            if (seqLess(msg.seq, ack))
+                            {
+                                sent_queue_.Dequeue();
+                            }
+                            else
+                            {
+                                break;
+                            }
                         }
                     }
 
@@ -929,22 +1031,24 @@ namespace Fun
                     {
                         if (sent_queue_.Count > 0)
                         {
+                            debug.LogDebug("[{0}] ack:{1}, sent queue:{2}",
+                                           str_protocol_, ack, sent_queue_.Count);
+
                             foreach (FunapiMessage msg in sent_queue_)
                             {
                                 if (msg.seq == ack || seqLess(ack, msg.seq))
                                 {
                                     sendMessage(msg);
-                                    debug.Log("{0} resending '{1}' message. (seq:{2})",
+
+                                    debug.Log("[{0}] Resending '{1}' message. (seq:{2})",
                                               str_protocol_, msg.msg_type, msg.seq);
                                 }
                                 else
                                 {
-                                    debug.LogWarning("onAckReceived({0}) - wrong sequence number {1}. ",
-                                                     ack, msg.seq);
+                                    debug.LogWarning("[{0}] Wrong sequence number: {1} ",
+                                                     str_protocol_, msg.seq);
                                 }
                             }
-
-                            debug.Log("Resending {0} message(s).", sent_queue_.Count);
                         }
 
                         onStandby();
@@ -1036,7 +1140,7 @@ namespace Fun
                     }
 
                     if (msg.msg_type != null &&
-                        msg.msg_type != kAckNumberField && msg.msg_type != kEmptyMessageType)
+                        msg.msg_type != kAckNumberField && msg.msg_type != kEmptyMessageType && msg.msg_type != kUdpHandShakeType)
                     {
                         // Adds message type
                         if (encoding_ == FunEncoding.kJson)
@@ -1090,6 +1194,21 @@ namespace Fun
                             }
                         }
                     }
+
+                    if (msg.msg_type == kUdpHandShakeType)
+                    {
+                        msg.msg_type = kEmptyMessageType;
+
+                        if (encoding_ == FunEncoding.kJson)
+                        {
+                            json_helper_.SetStringField(msg.message, kUdpHandshakeIdField, udp_handshake_id_.ToString());
+                        }
+                        else if (encoding_ == FunEncoding.kProtobuf)
+                        {
+                            FunMessage proto = msg.message as FunMessage;
+                            proto.udp_handshake_id = udp_handshake_id_.ToByteArray();
+                        }
+                    }
                 }
 
                 // Serializes message
@@ -1097,22 +1216,7 @@ namespace Fun
 
                 if (debug.IsDebug)
                 {
-                    StringBuilder log = new StringBuilder();
-                    log.AppendFormat("[C->S] {0}/{1}: type={2}, length={3} ",
-                                    str_protocol_, convertString(encoding_), msg.msg_type, msg.body.Count);
-                    if (msg.body.Count > 0)
-                    {
-                        if (encoding_ == FunEncoding.kJson)
-                        {
-                            string str = System.Text.Encoding.UTF8.GetString(msg.body.Array, msg.body.Offset, msg.body.Count);
-                            log.Append(str);
-                        }
-                        else if (encoding_ == FunEncoding.kProtobuf)
-                        {
-                            // TODO : Generates json string from protobuf message.
-                        }
-                    }
-                    debug.LogDebug(log.ToString());
+                    logSendingMessageInfo(msg, ack);
                 }
 
                 // Compress the message
@@ -1122,7 +1226,7 @@ namespace Fun
                     ArraySegment<byte> compressed = compressor_.Compress(msg.body);
                     if (compressed.Count > 0)
                     {
-                        debug.LogDebug("{0} compress message: {1}bytes -> {2}bytes",
+                        debug.LogDebug("[{0}] Compress message: {1}bytes -> {2}bytes",
                                        str_protocol_, msg.body.Count, compressed.Count);
 
                         uncompressed_size = msg.body.Count;
@@ -1153,16 +1257,15 @@ namespace Fun
                     }
                 }
 
+                if (msg.body.Count > kMaxPayloadSize)
+                {
+                    FunDebug.LogWarning("The message size is too large, which can cause unexpected problems. " +
+                                        "Please make the message size smaller than {0} bytes.", kMaxPayloadSize);
+                }
+
                 makeHeader(msg, uncompressed_size);
 
                 msg.ready = true;
-
-                StringBuilder strlog = new StringBuilder();
-                strlog.AppendFormat("{0} built a message - '{1}' ({2}bytes)",
-                                    str_protocol_, msg.msg_type, msg.header.Count + msg.body.Count);
-                if (msg.seq > 0) strlog.AppendFormat(" (seq : {0})", msg.seq);
-                if (ack > 0) strlog.AppendFormat(" (ack : {0})", ack);
-                debug.LogDebug(strlog.ToString());
 
                 return true;
             }
@@ -1204,15 +1307,51 @@ namespace Fun
 
                     if (debug.IsDebug)
                     {
-                        StringBuilder strlog = new StringBuilder();
-                        strlog.AppendFormat("{0} rebuilt a message - '{1}' ({2} + {3} bytes)",
-                                            str_protocol_, msg.msg_type, msg.header.Count, msg.body.Count);
-                        if (msg.seq > 0) strlog.AppendFormat(" (seq : {0})", msg.seq);
-                        debug.LogDebug(strlog.ToString());
+                        logSendingMessageInfo(msg);
                     }
                 }
 
                 return true;
+            }
+
+            void logSendingMessageInfo (FunapiMessage msg, UInt32 ack = 0)
+            {
+                StringBuilder log = new StringBuilder();
+
+                log.AppendFormat("[{0}] [C->S] {1}: type={2}, length={3}",
+                                 str_protocol_, convertString(encoding_), msg.msg_type, msg.body.Count);
+
+                if (msg.body.Count > 0)
+                {
+                    if (encoding_ == FunEncoding.kJson)
+                    {
+                        string str = System.Text.Encoding.UTF8.GetString(msg.body.Array, msg.body.Offset, msg.body.Count);
+                        log.AppendFormat(" {0}", str);
+                    }
+                    else if (encoding_ == FunEncoding.kProtobuf)
+                    {
+                        FunMessage funmsg = msg.message as FunMessage;
+
+                        if (funmsg.sidSpecified)
+                        {
+                            log.AppendFormat(", sid={0}", SessionId.ToString(funmsg.sid));
+                        }
+
+                        if (funmsg.seqSpecified)
+                        {
+                            log.AppendFormat(", seq={0}", funmsg.seq);
+                        }
+
+                        if (funmsg.ackSpecified)
+                        {
+                            log.AppendFormat(", ack={0}", funmsg.ack);
+                        }
+
+                        FunapiMessage.DebugString(funmsg, log);
+                    }
+                }
+
+                debug.LogDebug(log.ToString());
             }
 
             void sendPendingMessages ()
@@ -1255,10 +1394,35 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = string.Format("{0} failure in sendPendingMessages: {1}",
+                    error.message = string.Format("[{0}] Failure in sendPendingMessages: {1}",
                                                   str_protocol_, e.ToString());
                     onFailure(error);
                 }
+            }
+
+            protected int getSendingBufferLength ()
+            {
+                int length = 0;
+
+                lock (sending_lock_)
+                {
+                    foreach (FunapiMessage msg in sending_)
+                    {
+                        if (length > 0 && (length + msg.header.Count + msg.body.Count) > kSendBufferMax)
+                            break;
+
+                        if (msg.header.Count > 0)
+                        {
+                            length += msg.header.Count;
+                        }
+                        if (msg.body.Count > 0)
+                        {
+                            length += msg.body.Count;
+                        }
+                    }
+                }
+
+                return length;
             }
 
             protected void checkPendingMessages ()
@@ -1267,9 +1431,6 @@ namespace Fun
                 {
                     if (sending_.Count > 0)
                     {
-                        debug.LogDebug("{0} continues to send unsent messages. {1} remaining message(s).",
-                                       str_protocol_, sending_.Count);
-
                         wireSend();
                     }
                     else if (isSendable)
@@ -1281,7 +1442,7 @@ namespace Fun
 
             void sendPublicKey (EncryptionType type)
             {
-                debug.LogDebug("{0} sending a {1}-pubkey message.", str_protocol_, (int)type);
+                debug.LogDebug("[{0}] Sending a {1}-pubkey message.", str_protocol_, (int)type);
 
                 lock (sending_lock_)
                 {
@@ -1309,7 +1470,7 @@ namespace Fun
                 if (next_decoding_offset_ > 0)
                 {
                     // fit in the receive buffer boundary.
-                    debug.LogDebug("{0} compacting the receive buffer to save {1} bytes.",
+                    debug.LogDebug("[{0}] Compacting the receive buffer to save {1} bytes.",
                                    str_protocol_, next_decoding_offset_);
                     Buffer.BlockCopy(receive_buffer_, next_decoding_offset_, new_buffer, 0,
                                      received_size_ - next_decoding_offset_);
@@ -1319,7 +1480,7 @@ namespace Fun
                 }
                 else
                 {
-                    debug.LogDebug("{0} increasing the receive buffer to {1} bytes.",
+                    debug.LogDebug("[{0}] Increasing the receive buffer to {1} bytes.",
                                    str_protocol_, new_length);
                     Buffer.BlockCopy(receive_buffer_, 0, new_buffer, 0, received_size_);
                     receive_buffer_ = new_buffer;
@@ -1350,7 +1511,6 @@ namespace Fun
                         if (!valid)
                         {
                             // Not enough bytes. Wait for more bytes to come.
-                            debug.LogDebug("{0} need more bytes for a header field. Waiting.", str_protocol_);
                             break;
                         }
 
@@ -1370,17 +1530,11 @@ namespace Fun
                             string[] tuple = line.Split(kHeaderFieldDelimeterAsChars);
                             if (tuple.Length != 2)
                             {
-                                debug.LogWarning("{0} header has a invalid tuple - '{1}'", str_protocol_, line);
+                                debug.LogWarning("[{0}] Header has a invalid tuple - '{1}'", str_protocol_, line);
                                 continue;
                             }
 
                             fields[tuple[0].ToUpper()] = tuple[1];
-                        }
-
-                        if (!fields.ContainsKey(kVersionHeaderField))
-                        {
-                            throw new Exception(string.Format("{0} header is invalid. It doesn't have '{1}' field",
-                                                              str_protocol_, kVersionHeaderField));
                         }
 
                         if (!fields.ContainsKey(kLengthHeaderField))
@@ -1389,56 +1543,91 @@ namespace Fun
                                                               str_protocol_, kLengthHeaderField));
                         }
 
-                        // Protocol version
-                        int version = Convert.ToInt32(fields[kVersionHeaderField]);
-                        if (version != FunapiVersion.kProtocolVersion)
-                        {
-                            throw new Exception(string.Format("The protocol version doesn't match. client:{0} server:{1}",
-                                                              FunapiVersion.kProtocolVersion, version));
-                        }
-
                         offset = next_decoding_offset_ + header_length;
 
                         // Body length
                         int body_length = Convert.ToInt32(fields[kLengthHeaderField]);
                         if (received_size_ - offset < body_length)
                         {
-                            // Need more bytes.
-                            debug.LogDebug("{0} need more bytes for a message body. Waiting.", str_protocol_);
+                            // Need more bytes for a message body. Waiting.
                             break;
                         }
 
-                        debug.LogDebug("{0} header {1} bytes. body {2} bytes. ({3} bytes)",
-                                       str_protocol_, header_length, body_length,
-                                       header_length + body_length);
-
-                        // Makes raw message buffer
-                        RawMessage message = new RawMessage();
-
-                        if (fields.ContainsKey(kEncryptionHeaderField))
-                            message.encryption_header = Convert.ToString(fields[kEncryptionHeaderField]);
-
-                        if (fields.ContainsKey(kUncompressedLengthHeaderField))
-                            message.uncompressed_size = Convert.ToInt32(fields[kUncompressedLengthHeaderField]);
-
-                        if (body_length > 0)
+                        // Makes a raw message
+                        if (!readBodyAndSaveMessage(fields, offset))
                         {
-                            byte[] buffer = new byte[body_length];
-                            Buffer.BlockCopy(receive_buffer_, offset, buffer, 0, body_length);
-                            message.body = new ArraySegment<byte>(buffer, 0, body_length);
+                            break;
                         }
-                        else
-                        {
-                            message.body = new ArraySegment<byte>();
-                        }
-
-                        messages_.Enqueue(message);
-
-                        next_decoding_offset_ += header_length + body_length;
-                        debug.LogDebug("{0} {1} bytes left in buffer.",
-                                       str_protocol_, received_size_ - next_decoding_offset_);
                     }
                 }
+            }
+
+            protected bool readBodyAndSaveMessage (Dictionary<string, string> headers, int offset = 0)
+            {
+                lock (messages_lock_)
+                {
+                    if (headers.Count <= 0)
+                    {
+                        debug.LogWarning("[{0}] Header list is empty.", str_protocol_);
+                        return false;
+                    }
+
+                    if (!headers.ContainsKey(kVersionHeaderField))
+                    {
+                        throw new Exception(string.Format("[{0}] Header is invalid. It doesn't have '{1}' field",
+                                                          str_protocol_, kVersionHeaderField));
+                    }
+
+                    if (!headers.ContainsKey(kLengthHeaderField))
+                    {
+                        throw new Exception(string.Format("[{0}] Header is invalid. It doesn't have '{1}' field",
+                                                          str_protocol_, kLengthHeaderField));
+                    }
+
+                    // Protocol version
+                    int version = Convert.ToInt32(headers[kVersionHeaderField]);
+                    if (version != FunapiVersion.kProtocolVersion)
+                    {
+                        throw new Exception(string.Format("The protocol version doesn't match. client:{0} server:{1}",
+                                                          FunapiVersion.kProtocolVersion, version));
+                    }
+
+                    // Body length
+                    int body_length = Convert.ToInt32(headers[kLengthHeaderField]);
+                    if (received_size_ - offset < body_length)
+                    {
+                        // Need more bytes.
+                        debug.LogError("[{0}] Received {1} bytes but body length is {2}.",
+                                       str_protocol_, received_size_ - offset, body_length);
+                        return false;
+                    }
+
+                    // Makes raw message buffer
+                    RawMessage message = new RawMessage();
+
+                    if (headers.ContainsKey(kEncryptionHeaderField))
+                        message.encryption_header = Convert.ToString(headers[kEncryptionHeaderField]);
+
+                    if (headers.ContainsKey(kUncompressedLengthHeaderField))
+                        message.uncompressed_size = Convert.ToInt32(headers[kUncompressedLengthHeaderField]);
+
+                    if (body_length > 0)
+                    {
+                        byte[] buffer = new byte[body_length];
+                        Buffer.BlockCopy(receive_buffer_, offset, buffer, 0, body_length);
+                        message.body = new ArraySegment<byte>(buffer, 0, body_length);
+                    }
+                    else
+                    {
+                        message.body = new ArraySegment<byte>();
+                    }
+
+                    next_decoding_offset_ = offset + body_length;
+
+                    messages_.Enqueue(message);
+                }
+
+                return true;
             }
 
             bool decodeMessages ()
@@ -1447,8 +1636,6 @@ namespace Fun
                 {
                     if (messages_.Count == 0)
                         return true;
-
-                    debug.LogDebug("{0} update messages. ({1})", str_protocol_, messages_.Count);
 
                     while (messages_.Count > 0)
                     {
@@ -1463,8 +1650,8 @@ namespace Fun
                         {
                             if (msg.body.Count != 0)
                             {
-                                debug.LogWarning("{0} this message will be ignore. " +
-                                                 "This message might come from previous connection.", str_protocol_);
+                                debug.LogWarning("[{0}] This message will be ignored. " +
+                                                 "It might come from previous connection.", str_protocol_);
                                 return false;
                             }
 
@@ -1474,7 +1661,7 @@ namespace Fun
                                     return false;
 
                                 state_ = State.kConnected;
-                                debug.LogDebug("{0} handshaking is complete.", str_protocol_);
+                                debug.LogDebug("[{0}] Handshaking is complete.", str_protocol_);
 
                                 // Send public key (Do not change this order)
                                 if (hasEncryption(EncryptionType.kChaCha20Encryption))
@@ -1518,7 +1705,7 @@ namespace Fun
                                     return false;
                                 }
 
-                                debug.LogDebug("{0} decompress message: {1}bytes -> {2}bytes",
+                                debug.LogDebug("[{0}] Decompress message: {1}bytes -> {2}bytes",
                                                str_protocol_, msg.body.Count, decompressed.Count);
 
                                 msg.body = decompressed;
@@ -1533,138 +1720,278 @@ namespace Fun
                             resetConnectionTimeout();
                         }
 
-                        onReceivedMessage(msg.body);
+                        if (!onReceivedMessage(msg.body))
+                        {
+                            // Udp message errors are not treated as errors.
+                            if (protocol_ != TransportProtocol.kUdp)
+                            {
+                                messages_.Clear();
+                                break;
+                            }
+                        }
                     }
                 }
 
                 return true;
             }
 
-            void onReceivedMessage (ArraySegment<byte> body)
+            bool onReceivedMessage (ArraySegment<byte> body)
             {
                 if (body.Count <= 0)
-                    return;
+                    return true;
 
-                // Deserializing a message
-                object message = FunapiMessage.Deserialize(body, encoding_);
-                if (message == null)
-                {
-                    debug.LogWarning("{0} failed to deserialize a message.", str_protocol_);
-                    return;
-                }
-
-                // Checks ack and seq, gets message type
+                object message = null;
                 string msg_type = "";
-                if (encoding_ == FunEncoding.kJson)
+
+                try
                 {
-                    if (IsReliable)
+                    // Deserializing a message
+                    message = FunapiMessage.Deserialize(body, encoding_);
+                    if (message == null)
                     {
-                        if (json_helper_.HasField(message, kAckNumberField))
+                        debug.LogWarning("[{0}] Failed to deserialize a message.", str_protocol_);
+                        return false;
+                    }
+
+                    UInt32 ack = 0;
+
+                    // Checks ack and seq, gets message type
+                    if (encoding_ == FunEncoding.kJson)
+                    {
+                        if (IsReliable)
                         {
-                            UInt32 ack = (UInt32)json_helper_.GetIntegerField(message, kAckNumberField);
-                            onAckReceived(ack);
+                            if (json_helper_.HasField(message, kAckNumberField))
+                            {
+                                ack = (UInt32)json_helper_.GetIntegerField(message, kAckNumberField);
+                                onAckReceived(ack);
+                            }
+
+                            if (json_helper_.HasField(message, kSeqNumberField))
+                            {
+                                UInt32 seq = (UInt32)json_helper_.GetIntegerField(message, kSeqNumberField);
+                                if (!onSeqReceived(seq))
+                                    return true;
+                            }
                         }
 
-                        if (json_helper_.HasField(message, kSeqNumberField))
+                        if (json_helper_.HasField(message, kMessageTypeField))
                         {
-                            UInt32 seq = (UInt32)json_helper_.GetIntegerField(message, kSeqNumberField);
-                            if (!onSeqReceived(seq))
-                                return;
+                            msg_type = json_helper_.GetStringField(message, kMessageTypeField);
+                        }
+                        else if (ack > 0)
+                        {
+                            msg_type = "_ack";
+                        }
+                    }
+                    else if (encoding_ == FunEncoding.kProtobuf)
+                    {
+                        FunMessage funmsg = (FunMessage)message;
+
+                        if (IsReliable)
+                        {
+                            if (funmsg.ackSpecified)
+                            {
+                                ack = funmsg.ack;
+                                onAckReceived(ack);
+                            }
+
+                            if (funmsg.seqSpecified)
+                            {
+                                if (!onSeqReceived(funmsg.seq))
+                                    return true;
+                            }
+                        }
+
+                        if (funmsg.msgtypeSpecified)
+                        {
+                            msg_type = funmsg.msgtype;
+                        }
+                        else if (funmsg.msgtype2Specified)
+                        {
+                            msg_type = MessageTable.Lookup((MessageType)funmsg.msgtype2);
+                        }
+                        else if (ack > 0)
+                        {
+                            msg_type = "_ack";
                         }
                     }
 
-                    if (json_helper_.HasField(message, kMessageTypeField))
+                    // Checks sent session id
+                    lock (session_id_sent_lock_)
                     {
-                        msg_type = json_helper_.GetStringField(message, kMessageTypeField);
+                        if (send_session_id_only_once_ && !session_id_has_been_sent)
+                        {
+                            if (protocol_ != TransportProtocol.kHttp &&
+                                state_ == State.kEstablished && msg_type.Length > 0)
+                            {
+                                if (encoding_ == FunEncoding.kJson)
+                                {
+                                    if (!json_helper_.HasField(message, kUdpHandshakeIdField))
+                                    {
+                                        session_id_has_been_sent = true;
+                                    }
+                                }
+                                else if (encoding_ == FunEncoding.kProtobuf)
+                                {
+                                    FunMessage funmsg = (FunMessage)message;
+
+                                    if (!funmsg.udp_handshake_idSpecified)
+                                    {
+                                        session_id_has_been_sent = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (msg_type.Length > 0)
+                    {
+                        // Checks ping messages
+                        if (msg_type == kServerPingMessageType)
+                        {
+                            onServerPingMessage(message);
+                            return true;
+                        }
+                        else if (msg_type == kClientPingMessageType)
+                        {
+                            onClientPingMessage(message);
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        if (state_ == State.kWaitForAck)
+                        {
+                            lock (sending_lock_)
+                            {
+                                foreach (FunapiMessage msg in sent_queue_)
+                                {
+                                    sendMessage(msg);
+                                }
+                            }
+
+                            onStandby();
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    TransportError error = new TransportError();
+                    error.type = TransportError.Type.kDeserializeFailed;
+                    error.message = string.Format("[{0}] Failure in onReceivedMessage: {1}",
+                                                  str_protocol_, e.ToString());
+
+                    if (protocol_ == TransportProtocol.kUdp)
+                    {
+                        last_error_code_ = error.type;
+                        last_error_message_ = error.message;
+
+                        debug.Log(error.message);
+                    }
+                    else
+                    {
+                        onFailure(error);
+                    }
+
+                    return false;
+                }
+
+                if (debug.IsDebug)
+                {
+                    StringBuilder log = new StringBuilder();
+
+                    log.AppendFormat("[{0}] [S->C] {1}: type={2}, length={3}",
+                                     str_protocol_, convertString(encoding_), msg_type, body.Count);
+
+                    if (body.Count > 0)
+                    {
+                        if (encoding_ == FunEncoding.kJson)
+                        {
+                            string str = System.Text.Encoding.UTF8.GetString(body.Array, body.Offset, body.Count);
+                            log.AppendFormat(" {0}", str);
+                        }
+                        else if (encoding_ == FunEncoding.kProtobuf)
+                        {
+                            FunMessage funmsg = (FunMessage)message;
+
+                            if (funmsg.sidSpecified)
+                            {
+                                log.AppendFormat(", sid={0}", SessionId.ToString(funmsg.sid));
+                            }
+
+                            if (funmsg.seqSpecified)
+                            {
+                                log.AppendFormat(", seq={0}", funmsg.seq);
+                            }
+
+                            if (funmsg.ackSpecified)
+                            {
+                                log.AppendFormat(", ack={0}", funmsg.ack);
+                            }
+
+                            FunapiMessage.DebugString(funmsg, log);
+                        }
+                    }
+
+                    debug.LogDebug(log.ToString());
+                }
+
+                if (msg_type != kUdpAttachedType && ReceivedCallback != null)
+                    ReceivedCallback(this, msg_type, message);
+
+                if (!string.IsNullOrEmpty(msg_type))
+                {
+                    if (protocol_ == TransportProtocol.kUdp && !Connected)
+                    {
+                        if (msg_type == kSessionOpenedType || msg_type == kUdpAttachedType)
+                        {
+                            processUdpFirstMessageReply(msg_type, message);
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            protected void processUdpFirstMessageReply(string msg_type, object message)
+            {
+                Guid received_udp_handshake_id = Guid.Empty;
+
+                if (encoding_ == FunEncoding.kJson)
+                {
+                    if (json_helper_.HasField(message, kUdpHandshakeIdField))
+                    {
+                        string received_id_str = json_helper_.GetStringField(message, kUdpHandshakeIdField);
+                        received_udp_handshake_id = new Guid(received_id_str);
                     }
                 }
                 else if (encoding_ == FunEncoding.kProtobuf)
                 {
                     FunMessage funmsg = (FunMessage)message;
 
-                    if (IsReliable)
+                    if (funmsg.udp_handshake_idSpecified)
                     {
-                        if (funmsg.ackSpecified)
-                        {
-                            onAckReceived(funmsg.ack);
-                        }
-
-                        if (funmsg.seqSpecified)
-                        {
-                            if (!onSeqReceived(funmsg.seq))
-                                return;
-                        }
-                    }
-
-                    if (funmsg.msgtypeSpecified)
-                    {
-                        msg_type = funmsg.msgtype;
-                    }
-                    else if (funmsg.msgtype2Specified)
-                    {
-                        msg_type = MessageTable.Lookup((MessageType)funmsg.msgtype2);
+                        received_udp_handshake_id = new Guid(funmsg.udp_handshake_id);
                     }
                 }
 
-                // Checks sent session id
-                lock (session_id_sent_lock_)
+                if (received_udp_handshake_id == Guid.Empty)
                 {
-                    if (send_session_id_only_once_ && !session_id_has_been_sent)
-                    {
-                        if (protocol_ != TransportProtocol.kHttp &&
-                            state_ == State.kEstablished && msg_type.Length > 0)
-                        {
-                            session_id_has_been_sent = true;
-                        }
-                    }
+                    debug.LogWarning("[{0}] udp handshake id is null. This message is ignored. message_type:{1}", str_protocol_, msg_type);
+                    return;
                 }
-
-                if (msg_type.Length > 0)
+                else if (!Guid.Equals(received_udp_handshake_id, udp_handshake_id_))
                 {
-                    // Checks ping messages
-                    if (msg_type == kServerPingMessageType)
-                    {
-                        onServerPingMessage(message);
-                        return;
-                    }
-                    else if (msg_type == kClientPingMessageType)
-                    {
-                        onClientPingMessage(message);
-                        return;
-                    }
-
-                    debug.LogDebug("{0} received message - '{1}'", str_protocol_, msg_type);
+                    debug.LogWarning("[{0}] This message is ignored. " +
+                                        "It might come from previous connection. message_type:{1}", str_protocol_, msg_type);
+                    return;
                 }
-                else
+
+                if(state_ == State.kConnecting)
                 {
-                    if (state_ == State.kWaitForAck)
-                    {
-                        onStandby();
-                    }
+                    state_ = State.kConnected;
+                    onStarted();
                 }
-
-                if (debug.IsDebug)
-                {
-                    StringBuilder log = new StringBuilder();
-                    log.AppendFormat("[S->C] {0}/{1}: type={2}, length={3} ",
-                                    str_protocol_, convertString(encoding_), msg_type, body.Count);
-                    if (body.Count > 0)
-                    {
-                        if (encoding_ == FunEncoding.kJson)
-                        {
-                            string str = System.Text.Encoding.UTF8.GetString(body.Array, body.Offset, body.Count);
-                            log.Append(str);
-                        }
-                        else if (encoding_ == FunEncoding.kProtobuf)
-                        {
-                            // TODO : Generates json string from protobuf message.
-                        }
-                    }
-                    debug.LogDebug(log.ToString());
-                }
-
-                if (ReceivedCallback != null)
-                    ReceivedCallback(this, msg_type, message);
             }
 
             protected void onFailedSending ()
@@ -1674,7 +2001,7 @@ namespace Fun
                     if (sending_.Count <= 0)
                         return;
 
-                    debug.LogWarning("{0} sending failed. Clears the sending buffer. ({1})",
+                    debug.LogWarning("[{0}] Sending failed. Clears the sending buffer. ({1})",
                                      str_protocol_, sending_.Count);
 
                     sending_.Clear();
@@ -1685,29 +2012,53 @@ namespace Fun
             //---------------------------------------------------------------------
             // Ping-related functions
             //---------------------------------------------------------------------
+            bool isPingEnabled ()
+            {
+                return enable_ping_ && (protocol == TransportProtocol.kTcp || protocol == TransportProtocol.kWebsocket);
+
+            }
+
             void startPingTimer ()
             {
-                if (!enable_ping_ || protocol_ != TransportProtocol.kTcp)
+                if (!isPingEnabled())
+                {
                     return;
+                }
 
-                TcpTransportOption tcp_option = option_ as TcpTransportOption;
+                float interval = 0f;
+                float timeout = 0f;
+                if (protocol_ == TransportProtocol.kTcp)
+                {
+                    TcpTransportOption tcp_option = option_ as TcpTransportOption;
+                    interval = tcp_option.PingIntervalSeconds;
+                    timeout = tcp_option.PingTimeoutSeconds;
+                }
+                else // if (protocol_ == TransportProtocol.kWebsocket)
+                {
+                    WebsocketTransportOption websocket_option = option_ as WebsocketTransportOption;
+                    interval = websocket_option.PingIntervalSeconds;
+                    timeout = websocket_option.PingTimeoutSeconds;
+                }
 
-                float interval = tcp_option.PingIntervalSeconds;
-                if (interval <= 0)
+                if (interval <= 0f)
+                {
                     interval = kPingIntervalDefault;
+                }
 
-                ping_timer_ = new FunapiPingTimer(interval, tcp_option.PingTimeoutSeconds,
+                ping_timer_ = new FunapiPingTimer(interval, timeout,
                                                   onPingUpdate, onPingTimeout);
                 timer_.Add(ping_timer_, true);
 
-                debug.Log("{0} ping timer started. interval: {1}s timeout: {2}s",
-                          str_protocol_, interval, tcp_option.PingTimeoutSeconds);
+                debug.Log("[{0}] Ping timer started. interval: {1}s timeout: {2}s",
+                          str_protocol_, interval, timeout);
             }
 
             void stopPingTimer ()
             {
-                if (!enable_ping_ || protocol_ != TransportProtocol.kTcp)
+                if (!isPingEnabled())
+                {
                     return;
+                }
 
                 lock (sending_lock_)
                 {
@@ -1720,7 +2071,7 @@ namespace Fun
                     timer_.Remove(ping_timer_);
                     ping_timer_ = null;
 
-                    debug.Log("{0} ping timer stopped.", str_protocol_);
+                    debug.Log("[{0}] Ping timer stopped.", str_protocol_);
                 }
 
                 ping_time_ = 0;
@@ -1735,15 +2086,20 @@ namespace Fun
                 }
 
                 sendPingMessage();
+
+                if (ping_timer_ != null)
+                {
+                    ping_timer_.StartTimeout();
+                }
             }
 
             void onPingTimeout ()
             {
-                debug.LogWarning("{0} ping timer timed out.", str_protocol_);
+                debug.LogWarning("[{0}] Ping timer timed out.", str_protocol_);
 
                 TransportError error = new TransportError();
                 error.type = TransportError.Type.kDisconnected;
-                error.message = string.Format("{0} has not received a ping message for a long time.",
+                error.message = string.Format("[{0}] Didn't received a ping message for a long time.",
                                               str_protocol_);
                 onDisconnected(error);
             }
@@ -1767,7 +2123,9 @@ namespace Fun
                 }
 
                 if (enable_ping_log_)
-                    debug.LogDebug("Send ping - timestamp: {0}", timestamp);
+                {
+                    debug.LogDebug("[{0}] Send ping - timestamp: {1}", str_protocol_, timestamp);
+                }
             }
 
             void onServerPingMessage (object body)
@@ -1825,7 +2183,7 @@ namespace Fun
 
                 if (ping_timer_ != null)
                 {
-                    ping_timer_.Reset();
+                    ping_timer_.StopTimeout();
                 }
 
                 if (timestamp != 0)
@@ -1839,8 +2197,8 @@ namespace Fun
 
                 if (enable_ping_log_)
                 {
-                    debug.LogDebug("Received ping - timestamp:{0} time={1}ms",
-                                   timestamp, ping_time_);
+                    debug.LogDebug("[{0}] Received ping - timestamp:{1} time={2}ms",
+                                   str_protocol_, timestamp, ping_time_);
                 }
             }
 
@@ -1876,7 +2234,8 @@ namespace Fun
             const int kPingIntervalDefault = 3;
 
             // Buffer-related constants.
-            protected const int kUnitBufferSize = 65536;
+            protected const int kUnitBufferSize = 65536; // 64kb
+            protected const int kSendBufferMax = 32768;  // 32kb
 
             // Funapi header-related constants.
             protected const string kHeaderDelimeter = "\n";
@@ -1892,6 +2251,7 @@ namespace Fun
             const string kServerPingMessageType = "_ping_s";
             const string kClientPingMessageType = "_ping_c";
             const string kPingTimestampField = "timestamp";
+            protected const int kMaxPayloadSize = 1048576; // 1MB
 
             // for speed-up.
             static readonly char[] kHeaderDelimeterAsChars = kHeaderDelimeter.ToCharArray();
@@ -1913,8 +2273,11 @@ namespace Fun
             protected PostEventList event_ = new PostEventList();
             protected FunapiTimerList timer_ = new FunapiTimerList();
             protected bool is_paused_ = false;
+            Guid udp_handshake_id_ = Guid.Empty;
 
             // Connect-related member variables.
+            protected object start_lock_ = new object();
+            protected bool is_connection_timed_out_ = false;
             ConnectState cstate_ = ConnectState.kUnknown;
             bool auto_reconnect_ = false;
             float exponential_time_ = 0f;

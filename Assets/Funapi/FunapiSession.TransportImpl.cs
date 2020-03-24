@@ -15,7 +15,9 @@ using System.Text;
 using WebSocketSharp;
 #if !NO_UNITY
 using UnityEngine;
+using UnityEngine.Networking;
 #endif
+using System.Runtime.InteropServices;
 
 
 namespace Fun
@@ -36,10 +38,6 @@ namespace Fun
                 setAddress(hostname_or_ip, port);
 
                 ssl_ = (option as TcpTransportOption).UseTLS;
-                if (ssl_)
-                {
-                    TrustManager.LoadMozRoots();
-                }
             }
 
             public override HostAddr address
@@ -63,7 +61,7 @@ namespace Fun
                 TcpTransportOption tcp_option = (TcpTransportOption)option_;
                 debug.Log("[TCP] {0}:{1}, {2}, {3}, Compression:{4}, Sequence:{5}, " +
                           "ConnectionTimeout:{6}, AutoReconnect:{7}, Nagle:{8}, Ping:{9}",
-                          addr_.ip, addr_.port, convertString(encoding_), convertString(tcp_option.Encryption),
+                          addr_.host, addr_.port, convertString(encoding_), convertString(tcp_option.Encryption),
                           convertString(tcp_option.CompressionType), tcp_option.SequenceValidation,
                           tcp_option.ConnectionTimeout, tcp_option.AutoReconnect,
                           !tcp_option.DisableNagle, tcp_option.EnablePing);
@@ -74,18 +72,29 @@ namespace Fun
                 base.onStart();
 
                 state_ = State.kConnecting;
+                sent_length_ = 0;
 
-                addr_.refresh();
-
-                lock (sock_lock_)
+                try
                 {
-                    sock_ = new Socket(addr_.inet, SocketType.Stream, ProtocolType.Tcp);
+                    addr_.refresh();
 
-                    bool disable_nagle = (option_ as TcpTransportOption).DisableNagle;
-                    if (disable_nagle)
-                        sock_.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, true);
+                    lock (sock_lock_)
+                    {
+                        sock_ = new Socket(addr_.inet, SocketType.Stream, ProtocolType.Tcp);
 
-                    sock_.BeginConnect(addr_.list, addr_.port, new AsyncCallback(this.startCb), this);
+                        bool disable_nagle = (option_ as TcpTransportOption).DisableNagle;
+                        if (disable_nagle)
+                            sock_.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, true);
+
+                        sock_.BeginConnect(addr_.host, addr_.port, new AsyncCallback(this.startCb), this);
+                    }
+                }
+                catch (Exception e)
+                {
+                    TransportError error = new TransportError();
+                    error.type = TransportError.Type.kStartingFailed;
+                    error.message = "[TCP] Failure in onStart: " + e.ToString();
+                    onFailure(error);
                 }
             }
 
@@ -106,56 +115,58 @@ namespace Fun
                     }
                 }
 
+                sent_length_ = 0;
+
                 base.onClose();
             }
 
             protected override void wireSend ()
             {
-                byte[] send_buffer = null;
-                List<ArraySegment<byte>> list = new List<ArraySegment<byte>>();
-                int length = 0;
-
-                lock (sending_lock_)
-                {
-                    foreach (FunapiMessage msg in sending_)
-                    {
-                        if (msg.header.Count > 0)
-                        {
-                            list.Add(msg.header);
-                            length += msg.header.Count;
-                        }
-
-                        if (msg.body.Count > 0)
-                        {
-                            list.Add(msg.body);
-                            length += msg.body.Count;
-                        }
-                    }
-
-                    if (ssl_)
-                    {
-                        ssl_send_size_ = length;
-
-                        send_buffer = new byte[ssl_send_size_];
-                        int offset = 0;
-                        foreach (ArraySegment<byte> data in list)
-                        {
-                            Buffer.BlockCopy(data.Array, 0, send_buffer, offset, data.Count);
-                            offset += data.Count;
-                        }
-                    }
-
-                    debug.LogDebug("[TCP] sending {0} message(s). ({1}bytes)", sending_.Count, length);
-                }
-
                 try
                 {
+                    List<ArraySegment<byte>> list = new List<ArraySegment<byte>>();
+                    int length = 0;
+
+                    lock (sending_lock_)
+                    {
+                        if (sent_length_ > 0)
+                            return;
+
+                        foreach (FunapiMessage msg in sending_)
+                        {
+                            if (list.Count > 0 && (length + msg.header.Count + msg.body.Count) > kSendBufferMax)
+                                break;
+
+                            // Send headers unconditionally.
+                            if (msg.header.Count > 0)
+                            {
+                                list.Add(msg.header);
+                                length += msg.header.Count;
+                            }
+
+                            // Send bodies but if the length is larger than kSendBufferMax, sends it in pieces.
+                            if (msg.body.Count > 0)
+                            {
+                                if (length + msg.body.Count > kSendBufferMax)
+                                {
+                                    int partial_sent = kSendBufferMax - length;
+                                    list.Add(new ArraySegment<byte>(msg.body.Array, msg.body.Offset, partial_sent));
+                                    length += partial_sent;
+                                    break;
+                                }
+                                else
+                                {
+                                    list.Add(msg.body);
+                                    length += msg.body.Count;
+                                }
+                            }
+                        }
+                    }
+
                     lock (sock_lock_)
                     {
                         if (sock_ == null)
-                        {
                             return;
-                        }
 
                         if (ssl_)
                         {
@@ -165,10 +176,21 @@ namespace Fun
                                 return;
                             }
 
+                            byte[] send_buffer = new byte[length];
+                            int offset = 0;
+
+                            foreach (ArraySegment<byte> data in list)
+                            {
+                                Buffer.BlockCopy(data.Array, 0, send_buffer, offset, data.Count);
+                                offset += data.Count;
+                            }
+
+                            sent_length_ = length;
                             ssl_stream_.BeginWrite(send_buffer, 0, length, new AsyncCallback(this.sendBytesCb), ssl_stream_);
                         }
                         else
                         {
+                            sent_length_ = length;
                             sock_.BeginSend(list, SocketFlags.None, new AsyncCallback(this.sendBytesCb), this);
                         }
                     }
@@ -183,7 +205,7 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "[TCP] failure in wireSend: " + e.ToString();
+                    error.message = "[TCP] Failure in wireSend: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -192,51 +214,59 @@ namespace Fun
             {
                 try
                 {
-                    lock (sock_lock_)
+                    lock (start_lock_)
                     {
-                        if (sock_ == null)
+                        if (is_connection_timed_out_)
                         {
                             return;
                         }
 
-                        sock_.EndConnect(ar);
-                        if (sock_.Connected == false)
+                        lock (sock_lock_)
                         {
-                            TransportError error = new TransportError();
-                            error.type = TransportError.Type.kStartingFailed;
-                            error.message = string.Format("[TCP] connection failed.");
-                            onFailure(error);
-                            return;
-                        }
-                        debug.LogDebug("[TCP] transport connected. Starts handshaking..");
+                            if (sock_ == null || state_ != State.kConnecting)
+                            {
+                                return;
+                            }
 
-                        if (ssl_)
-                        {
-                            ssl_stream_ = new SslStream(new NetworkStream(sock_), false, TrustManager.CertValidationCallback);
-                        }
+                            sock_.EndConnect(ar);
+                            if (sock_.Connected == false)
+                            {
+                                TransportError error = new TransportError();
+                                error.type = TransportError.Type.kStartingFailed;
+                                error.message = string.Format("[TCP] connection failed.");
+                                onFailure(error);
+                                return;
+                            }
+                            debug.LogDebug("[TCP] Connected. Starts handshaking..");
 
-                        state_ = State.kHandshaking;
-
-                        lock (receive_lock_)
-                        {
-                            // Wait for handshaking message.
                             if (ssl_)
                             {
-                                if (ssl_stream_ == null)
-                                {
-                                    debug.LogWarning("[TCP] SSL stream is null.");
-                                    return;
-                                }
-
-                                ssl_stream_.BeginAuthenticateAsClient(addr_.host, new AsyncCallback(this.authenticateCb), ssl_stream_);
+                                ssl_stream_ = new SslStream(new NetworkStream(sock_), false, TrustManager.CertValidationCallback);
                             }
-                            else
-                            {
-                                ArraySegment<byte> wrapped = new ArraySegment<byte>(receive_buffer_, 0, receive_buffer_.Length);
-                                List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
-                                buffer.Add(wrapped);
 
-                                sock_.BeginReceive(buffer, SocketFlags.None, new AsyncCallback(this.receiveBytesCb), this);
+                            state_ = State.kHandshaking;
+
+                            lock (receive_lock_)
+                            {
+                                // Wait for handshaking message.
+                                if (ssl_)
+                                {
+                                    if (ssl_stream_ == null)
+                                    {
+                                        debug.LogWarning("[TCP] SSL stream is null.");
+                                        return;
+                                    }
+
+                                    ssl_stream_.BeginAuthenticateAsClient(addr_.host, new AsyncCallback(this.authenticateCb), ssl_stream_);
+                                }
+                                else
+                                {
+                                    ArraySegment<byte> wrapped = new ArraySegment<byte>(receive_buffer_, 0, receive_buffer_.Length);
+                                    List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
+                                    buffer.Add(wrapped);
+
+                                    sock_.BeginReceive(buffer, SocketFlags.None, new AsyncCallback(this.receiveBytesCb), this);
+                                }
                             }
                         }
                     }
@@ -249,7 +279,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kStartingFailed;
-                    error.message = "[TCP] failure in startCb: " + e.ToString();
+                    error.message = "[TCP] Failure in startCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -270,7 +300,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kStartingFailed;
-                    error.message = "TCP failure in authenticateCb: " + e.ToString();
+                    error.message = "TCP Failure in authenticateCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -284,9 +314,7 @@ namespace Fun
                     lock (sock_lock_)
                     {
                         if (sock_ == null)
-                        {
                             return;
-                        }
 
                         if (ssl_)
                         {
@@ -297,9 +325,7 @@ namespace Fun
                             }
 
                             ssl_stream_.EndWrite(ar);
-
-                            nSent = ssl_send_size_;
-                            ssl_send_size_ = 0;
+                            nSent = sent_length_;
                         }
                         else
                         {
@@ -309,8 +335,6 @@ namespace Fun
 
                     if (nSent > 0)
                     {
-                        debug.LogDebug("[TCP] sent {0} bytes.", nSent);
-
                         lock (sending_lock_)
                         {
                             while (nSent > 0)
@@ -320,21 +344,39 @@ namespace Fun
                                     // removes a sent message.
                                     FunapiMessage msg = sending_[0];
                                     int length = msg.header.Count + msg.body.Count;
-                                    nSent -= length;
-                                    sending_.RemoveAt(0);
+                                    if (length <= nSent)
+                                    {
+                                        if (msg.header.Count <= 0)
+                                            debug.LogDebug("[TCP] Partially sent {0} bytes. 0 bytes left.", nSent);
+
+                                        nSent -= length;
+                                        sending_.RemoveAt(0);
+                                    }
+                                    else
+                                    {
+                                        int offset = nSent - msg.header.Count;
+
+                                        if (msg.header.Count > 0)
+                                            msg.header = new ArraySegment<byte>();
+
+                                        msg.body = new ArraySegment<byte>(msg.body.Array, msg.body.Offset + offset, msg.body.Count - offset);
+                                        debug.LogDebug("[TCP] Partially sent {0} bytes. {1} bytes left.", nSent, msg.body.Count);
+                                        break;
+                                    }
                                 }
                                 else
                                 {
-                                    debug.LogError("[TCP] couldn't find the sending buffers that sent messages.\n" +
-                                                   "Sent {0} more bytes but there are no sending buffers.", nSent);
+                                    debug.LogError("[TCP] Sent {0} more bytes but couldn't find the sending buffer.", nSent);
                                     break;
                                 }
                             }
 
-                            if (sending_.Count != 0)
+                            if (sending_.Count > 0)
                             {
-                                debug.LogError("sendBytesCb - sending buffer has {0} message(s).", sending_.Count);
+                                debug.LogDebug("[TCP] {0} message(s) left in the sending buffer.", sending_.Count);
                             }
+
+                            sent_length_ = 0;
 
                             // Sends pending messages.
                             checkPendingMessages();
@@ -353,7 +395,7 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "[TCP] failure in sendBytesCb: " + e.ToString();
+                    error.message = "[TCP] Failure in sendBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -367,9 +409,7 @@ namespace Fun
                     lock (sock_lock_)
                     {
                         if (sock_ == null)
-                        {
                             return;
-                        }
 
                         if (ssl_)
                         {
@@ -392,8 +432,6 @@ namespace Fun
                         if (nRead > 0)
                         {
                             received_size_ += nRead;
-                            debug.LogDebug("[TCP] received {0} bytes. Buffer has {1} bytes.",
-                                            nRead, received_size_ - next_decoding_offset_);
 
                             // Parses messages
                             parseMessages();
@@ -407,21 +445,18 @@ namespace Fun
                                 if (ssl_)
                                 {
                                     ssl_stream_.BeginRead(receive_buffer_, received_size_, receive_buffer_.Length - received_size_,
-                                                         new AsyncCallback(this.receiveBytesCb), ssl_stream_);
+                                                          new AsyncCallback(this.receiveBytesCb), ssl_stream_);
                                 }
                                 else
                                 {
                                     ArraySegment<byte> residual = new ArraySegment<byte>(
-                                    receive_buffer_, received_size_, receive_buffer_.Length - received_size_);
+                                        receive_buffer_, received_size_, receive_buffer_.Length - received_size_);
 
                                     List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
                                     buffer.Add(residual);
 
                                     sock_.BeginReceive(buffer, SocketFlags.None, new AsyncCallback(this.receiveBytesCb), this);
                                 }
-
-                                debug.LogDebug("[TCP] ready to receive more. TCP can receive upto {0} more bytes.",
-                                               receive_buffer_.Length - received_size_);
                             }
                         }
                         else
@@ -437,7 +472,7 @@ namespace Fun
                 }
                 catch (Exception e)
                 {
-                    // When Stop is called Socket.EndReceive may return a NullReferenceException
+                    // When Stop is called, Socket.EndReceive may return a NullReferenceException
                     if (e is ObjectDisposedException || e is NullReferenceException)
                     {
                         debug.LogDebug("[TCP] BeginReceive operation has been cancelled.");
@@ -446,7 +481,7 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "[TCP] failure in receiveBytesCb: " + e.ToString();
+                    error.message = "[TCP] Failure in receiveBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -455,9 +490,9 @@ namespace Fun
             Socket sock_;
             HostIP addr_;
             bool ssl_ = false;
-            int ssl_send_size_;
             SslStream ssl_stream_ = null;
             object sock_lock_ = new object();
+            int sent_length_ = 0;
         }
 
 
@@ -494,7 +529,7 @@ namespace Fun
                 addr_ = new HostIP(host, port);
 
                 debug.Log("[UDP] {0}:{1}, {2}, {3}, Compression:{4}, Sequence:{5}, ConnectionTimeout:{6}",
-                          addr_.ip, addr_.port, convertString(encoding_), convertString(option_.Encryption),
+                          addr_.host, addr_.port, convertString(encoding_), convertString(option_.Encryption),
                           convertString(option_.CompressionType), option_.SequenceValidation,
                           option_.ConnectionTimeout);
             }
@@ -503,39 +538,53 @@ namespace Fun
             {
                 base.onStart();
 
-                state_ = State.kConnected;
+                sent_length_ = 0;
+                state_ = State.kConnecting;
 
-                lock (sock_lock_)
+                try
                 {
-                    sock_ = new Socket(addr_.inet, SocketType.Dgram, ProtocolType.Udp);
-                    sock_.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                    addr_.refresh();
 
-                    int port = 0;
-#if FIXED_UDP_LOCAL_PORT
-                    port = LocalPort.Next();
-#endif
-                    if (addr_.inet == AddressFamily.InterNetworkV6)
-                        sock_.Bind(new IPEndPoint(IPAddress.IPv6Any, port));
-                    else
-                        sock_.Bind(new IPEndPoint(IPAddress.Any, port));
-
-                    IPEndPoint lep = (IPEndPoint)sock_.LocalEndPoint;
-                    debug.LogDebug("[UDP] bind - local:{0}:{1}", lep.Address, lep.Port);
-
-                    send_ep_ = new IPEndPoint(addr_.ip, addr_.port);
-                    if (addr_.inet == AddressFamily.InterNetworkV6)
-                        receive_ep_ = (EndPoint)new IPEndPoint(IPAddress.IPv6Any, addr_.port);
-                    else
-                        receive_ep_ = (EndPoint)new IPEndPoint(IPAddress.Any, addr_.port);
-
-                    lock (receive_lock_)
+                    lock (sock_lock_)
                     {
-                        sock_.BeginReceiveFrom(receive_buffer_, 0, receive_buffer_.Length, SocketFlags.None,
-                                               ref receive_ep_, new AsyncCallback(this.receiveBytesCb), this);
-                    }
-                }
+                        sock_ = new Socket(addr_.inet, SocketType.Dgram, ProtocolType.Udp);
+                        sock_.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
-                onStarted();
+                        int port = 0;
+#if FIXED_UDP_LOCAL_PORT
+                        port = LocalPort.Next();
+#endif
+                        if (addr_.inet == AddressFamily.InterNetworkV6)
+                            sock_.Bind(new IPEndPoint(IPAddress.IPv6Any, port));
+                        else
+                            sock_.Bind(new IPEndPoint(IPAddress.Any, port));
+
+                        IPEndPoint lep = (IPEndPoint)sock_.LocalEndPoint;
+                        debug.LogDebug("[UDP] bind {0}:{1}", lep.Address, lep.Port);
+
+                        send_ep_ = new IPEndPoint(addr_.ip, addr_.port);
+                        debug.LogDebug("[UDP] host ip {0}", addr_.ip);
+                        if (addr_.inet == AddressFamily.InterNetworkV6)
+                            receive_ep_ = (EndPoint)new IPEndPoint(IPAddress.IPv6Any, addr_.port);
+                        else
+                            receive_ep_ = (EndPoint)new IPEndPoint(IPAddress.Any, addr_.port);
+
+                        lock (receive_lock_)
+                        {
+                            sock_.BeginReceiveFrom(receive_buffer_, 0, receive_buffer_.Length, SocketFlags.None,
+                                                   ref receive_ep_, new AsyncCallback(this.receiveBytesCb), this);
+                        }
+                    }
+
+                    mono.StartCoroutine(tryToSendUdpEmptyMessage());
+                }
+                catch (Exception e)
+                {
+                    TransportError error = new TransportError();
+                    error.type = TransportError.Type.kStartingFailed;
+                    error.message = "[UDP] Failure in onStart: " + e.ToString();
+                    onFailure(error);
+                }
             }
 
             protected override void onClose ()
@@ -549,6 +598,8 @@ namespace Fun
                     }
                 }
 
+                sent_length_ = 0;
+
                 base.onClose();
             }
 
@@ -559,6 +610,9 @@ namespace Fun
 
                 lock (sending_lock_)
                 {
+                    if (sent_length_ > 0)
+                        return;
+
                     FunDebug.Assert(sending_.Count > 0);
 
                     // Sends one message.
@@ -583,8 +637,6 @@ namespace Fun
                         Buffer.BlockCopy(msg.body.Array, 0, send_buffer_, offset, msg.body.Count);
                         offset += msg.body.Count;
                     }
-
-                    debug.LogDebug("[UDP] sending {0} bytes.", length);
                 }
 
                 if (offset > 0)
@@ -593,6 +645,7 @@ namespace Fun
                     {
                         lock (sock_lock_)
                         {
+                            sent_length_ = offset;
                             sock_.BeginSendTo(send_buffer_, 0, offset, SocketFlags.None,
                                               send_ep_, new AsyncCallback(this.sendBytesCb), this);
                         }
@@ -623,7 +676,6 @@ namespace Fun
                             return;
                         }
                     }
-                    debug.LogDebug("[UDP] sent {0} bytes.", nSent);
 
                     lock (sending_lock_)
                     {
@@ -633,6 +685,7 @@ namespace Fun
                         // Removes header and body segment
                         int nLength = msg.header.Count + msg.body.Count;
                         sending_.RemoveAt(0);
+                        sent_length_ = 0;
 
                         if (nSent != nLength)
                         {
@@ -654,7 +707,7 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "[UDP] failure in sendBytesCb: " + e.ToString();
+                    error.message = "[UDP] Failure in sendBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -678,8 +731,6 @@ namespace Fun
                         if (nRead > 0)
                         {
                             received_size_ += nRead;
-                            debug.LogDebug("[UDP] received {0} bytes. Buffer has {1} bytes.",
-                                            nRead, received_size_ - next_decoding_offset_);
                         }
 
                         // Parses a message
@@ -698,20 +749,11 @@ namespace Fun
                                                        receive_buffer_.Length - received_size_,
                                                        SocketFlags.None, ref receive_ep_,
                                                        new AsyncCallback(this.receiveBytesCb), this);
-
-                                debug.LogDebug("[UDP] ready to receive more. UDP can receive upto {0} more bytes",
-                                                receive_buffer_.Length);
                             }
                         }
                         else
                         {
                             debug.LogWarning("[UDP] socket closed");
-
-                            if (received_size_ - next_decoding_offset_ > 0)
-                            {
-                                debug.LogWarning("[UDP] buffer has {0} bytes but they failed to decode. Discarding.",
-                                                 received_size_ - next_decoding_offset_);
-                            }
 
                             TransportError error = new TransportError();
                             error.type = TransportError.Type.kDisconnected;
@@ -730,10 +772,11 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "[UDP] failure in receiveBytesCb: " + e.ToString();
+                    error.message = "[UDP] Failure in receiveBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
+
 
 #if FIXED_UDP_LOCAL_PORT
             // This class is to prevent UDP local ports from overlapping.
@@ -801,6 +844,7 @@ namespace Fun
 
             // Sending buffer
             byte[] send_buffer_ = new byte[kUdpBufferSize];
+            int sent_length_ = 0;
         }
 
 
@@ -816,9 +860,6 @@ namespace Fun
                 option = http_option;
 
                 setAddress(hostname_or_ip, port, https);
-
-                if (https)
-                    TrustManager.LoadMozRoots();
             }
 
             public override HostAddr address
@@ -913,13 +954,15 @@ namespace Fun
                 if (str_cookie_.Length > 0)
                     headers.Add(kCookieHeaderField, str_cookie_);
 
-                debug.LogDebug("[HTTP] sending {0} bytes.", msg.header.Count + msg.body.Count);
-
 #if !NO_UNITY
                 // Sending a message
                 if (using_www_)
                 {
+#if UNITY_2017_1_OR_NEWER
+                    sendUWRequest(headers, msg);
+#else
                     sendWWWRequest(headers, msg);
+#endif
                 }
                 else
 #endif
@@ -929,6 +972,36 @@ namespace Fun
             }
 
 #if !NO_UNITY
+#if UNITY_2017_1_OR_NEWER
+            void sendUWRequest (Dictionary<string, string> headers, FunapiMessage msg)
+            {
+                Request request = new Request();
+
+                lock (request_lock_)
+                {
+                    FunDebug.Assert(cur_request_ == null);
+                    cur_request_ = request;
+                }
+
+                if (msg.body.Count > 0)
+                {
+                    request.uw_request = new UnityWebRequest(host_url_);
+                    request.uw_request.method = UnityWebRequest.kHttpVerbPOST;
+                    request.uw_request.uploadHandler = new UploadHandlerRaw(msg.body.Array);
+                    request.uw_request.downloadHandler = new DownloadHandlerBuffer();
+                }
+                else
+                {
+                    request.uw_request = UnityWebRequest.Get(host_url_);
+                }
+
+                foreach (KeyValuePair<string, string> item in headers) {
+                    request.uw_request.SetRequestHeader(item.Key, item.Value);
+                }
+                request.uw_request.SendWebRequest();
+                mono.StartCoroutine(uwRequest(request.uw_request));
+            }
+#else
             void sendWWWRequest (Dictionary<string, string> headers, FunapiMessage msg)
             {
                 Request request = new Request();
@@ -950,6 +1023,7 @@ namespace Fun
                     mono.StartCoroutine(wwwPost(request.www));
                 }
             }
+#endif
 #endif
 
             void sendHttpWebRequest (Dictionary<string, string> headers, FunapiMessage msg)
@@ -978,70 +1052,40 @@ namespace Fun
                 web_request.BeginGetRequestStream(new AsyncCallback(requestStreamCb), request);
             }
 
-            void onReceiveHeader (string headers)
+            void onReceiveHeader (Dictionary<string, string> headers)
             {
-                StringBuilder buffer = new StringBuilder();
-                string[] lines = headers.Replace("\r", "").Split('\n');
-                int body_length = 0;
+                headers.Add(kVersionHeaderField, FunapiVersion.kProtocolVersion.ToString());
 
-                buffer.AppendFormat("{0}{1}{2}{3}", kVersionHeaderField, kHeaderFieldDelimeter,
-                                    FunapiVersion.kProtocolVersion, kHeaderDelimeter);
-
-                foreach (string n in lines)
+                if (headers.ContainsKey("set-cookie"))
                 {
-                    if (n.Length > 0)
-                    {
-                        string[] tuple = n.Split(kHeaderSeparator, StringSplitOptions.RemoveEmptyEntries);
-                        string key = tuple[0].ToLower();
-                        string value = "";
-
-                        if (tuple.Length >= 2)
-                            value = tuple[1];
-
-                        switch (key)
-                        {
-                        case "content-type":
-                            break;
-                        case "set-cookie":
-                            str_cookie_ = value;
-                            debug.LogDebug("[HTTP] set-cookie : {0}", str_cookie_);
-                            break;
-                        case "content-length":
-                            body_length = Convert.ToInt32(value);
-                            buffer.AppendFormat("{0}{1}{2}{3}", kLengthHeaderField,
-                                                kHeaderFieldDelimeter, value, kHeaderDelimeter);
-                            break;
-                        case "x-ifun-enc":
-                            buffer.AppendFormat("{0}{1}{2}{3}", kEncryptionHeaderField,
-                                                kHeaderFieldDelimeter, value, kHeaderDelimeter);
-                            break;
-                        case "x-ifun-c":
-                            buffer.AppendFormat("{0}{1}{2}{3}", kUncompressedLengthHeaderField,
-                                                kHeaderFieldDelimeter, value, kHeaderDelimeter);
-                            break;
-                        default:
-                            buffer.AppendFormat("{0}{1}{2}{3}", tuple[0],
-                                                kHeaderFieldDelimeter, value, kHeaderDelimeter);
-                            break;
-                        }
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    str_cookie_ = headers["set-cookie"];
+                    debug.LogDebug("[HTTP] set-cookie : {0}", str_cookie_);
                 }
-                buffer.Append(kHeaderDelimeter);
 
-                byte[] header_bytes = System.Text.Encoding.ASCII.GetBytes(buffer.ToString());
+                if (headers.ContainsKey("x-ifun-enc"))
+                {
+                    headers.Add(kEncryptionHeaderField, headers["x-ifun-enc"]);
+                    headers.Remove("x-ifun-enc");
+                }
+
+                if (headers.ContainsKey("x-ifun-c"))
+                {
+                    headers.Add(kUncompressedLengthHeaderField, headers["x-ifun-c"]);
+                    headers.Remove("x-ifun-c");
+                }
+
+                int body_length = 0;
+                if (headers.ContainsKey("content-length"))
+                {
+                    body_length = Convert.ToInt32(headers["content-length"]);
+                    headers.Add(kLengthHeaderField, body_length.ToString());
+                    headers.Remove("content-length");
+                }
 
                 // Checks buffer's space
                 received_size_ = 0;
                 next_decoding_offset_ = 0;
-                checkReceiveBuffer(header_bytes.Length + body_length);
-
-                // Copy to buffer
-                Buffer.BlockCopy(header_bytes, 0, receive_buffer_, 0, header_bytes.Length);
-                received_size_ += header_bytes.Length;
+                checkReceiveBuffer(body_length);
             }
 
             void requestStreamCb (IAsyncResult ar)
@@ -1059,8 +1103,6 @@ namespace Fun
                     lock (sending_lock_)
                     {
                         FunDebug.Assert(sending_.Count > 0);
-                        debug.LogDebug("[HTTP] sent {0} bytes.", msg.header.Count + msg.body.Count);
-
                         sending_.RemoveAt(0);
                     }
 
@@ -1079,7 +1121,7 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "[HTTP] failure in requestStreamCb: " + e.ToString();
+                    error.message = "[HTTP] Failure in requestStreamCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1102,9 +1144,13 @@ namespace Fun
                     {
                         lock (receive_lock_)
                         {
-                            byte[] header = request.web_response.Headers.ToByteArray();
-                            string str_header = System.Text.Encoding.ASCII.GetString(header, 0, header.Length);
-                            onReceiveHeader(str_header);
+                            var headers = request.web_response.Headers;
+                            foreach (string key in headers.AllKeys)
+                            {
+                                request.headers.Add(key.ToLower(), headers[key]);
+                            }
+
+                            onReceiveHeader(request.headers);
 
                             request.read_stream = request.web_response.GetResponseStream();
                             request.read_stream.BeginRead(receive_buffer_, received_size_,
@@ -1134,7 +1180,7 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "[HTTP] failure in responseCb: " + e.ToString();
+                    error.message = "[HTTP] Failure in responseCb: " + e.ToString();
                     onFailure(error);
                 }
             }
@@ -1166,12 +1212,10 @@ namespace Fun
                             return;
                         }
 
-                        debug.LogDebug("[HTTP] received {0} bytes.", received_size_);
-
                         lock (receive_lock_)
                         {
-                            // Parses a message
-                            parseMessages();
+                            // Makes a raw message
+                            readBodyAndSaveMessage(request.headers);
                         }
 
                         request.read_stream.Close();
@@ -1196,12 +1240,87 @@ namespace Fun
 
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "[HTTP] failure in readCb: " + e.ToString();
+                    error.message = "[HTTP] Failure in readCb: " + e.ToString();
                     onFailure(error);
                 }
             }
 
 #if !NO_UNITY
+#if UNITY_2017_1_OR_NEWER
+            IEnumerator uwRequest(UnityWebRequest www)
+            {
+                FunDebug.Assert(cur_request_ != null);
+
+                while (!www.isDone && !cur_request_.cancel)
+                {
+                    yield return null;
+                }
+
+                lock (request_lock_)
+                {
+                    if (cur_request_.cancel)
+                    {
+                        cur_request_ = null;
+                        yield break;
+                    }
+                }
+
+                try
+                {
+                    lock (sending_lock_)
+                    {
+                        FunDebug.Assert(sending_.Count > 0);
+                        sending_.RemoveAt(0);
+                    }
+
+                    if (www.error != null && www.error.Length > 0)
+                    {
+                        throw new Exception(www.error);
+                    }
+
+                    // Gets the headers
+                    foreach (var item in www.GetResponseHeaders())
+                    {
+                        cur_request_.headers.Add(item.Key.ToLower(), item.Value);
+                    }
+#if UNITY_WEBGL
+                    // If there is no content-length, adds the content-length.
+                    // This is for the WebGL client.
+                    if (!cur_request_.headers.ContainsKey("content-length"))
+                    {
+                        cur_request_.headers.Add("content-length", www.downloadHandler.data.Length.ToString());
+                    }
+#endif
+
+                    // Decodes message
+                    lock (receive_lock_)
+                    {
+                        onReceiveHeader(cur_request_.headers);
+
+                        Buffer.BlockCopy(www.downloadHandler.data, 0, receive_buffer_, received_size_, www.downloadHandler.data.Length);
+                        received_size_ += www.downloadHandler.data.Length;
+
+                        // Makes a raw message
+                        readBodyAndSaveMessage(cur_request_.headers);
+                    }
+
+                    lock (request_lock_)
+                    {
+                        cur_request_ = null;
+                    }
+
+                    // Checks unsent messages
+                    checkPendingMessages();
+                }
+                catch (Exception e)
+                {
+                    TransportError error = new TransportError();
+                    error.type = TransportError.Type.kRequestFailed;
+                    error.message = "[HTTP] Failure in uwRequest: " + e.ToString();
+                    onFailure(error);
+                }
+            }
+#else
             IEnumerator wwwPost (WWW www)
             {
                 FunDebug.Assert(cur_request_ != null);
@@ -1225,10 +1344,6 @@ namespace Fun
                     lock (sending_lock_)
                     {
                         FunDebug.Assert(sending_.Count > 0);
-                        FunapiMessage msg = sending_[0];
-                        debug.LogDebug("[HTTP] sent a message - '{0}' ({1}bytes)",
-                                        msg.msg_type, msg.body.Count);
-
                         sending_.RemoveAt(0);
                     }
 
@@ -1237,26 +1352,30 @@ namespace Fun
                         throw new Exception(www.error);
                     }
 
-                    // Decodes message
-                    StringBuilder headers = new StringBuilder();
-                    foreach (KeyValuePair<string, string> item in www.responseHeaders)
+                    // Gets the headers
+                    foreach (var item in www.responseHeaders)
                     {
-                        headers.AppendFormat("{0}{1}{2}{3}",
-                            item.Key, kHeaderFieldDelimeter, item.Value, kHeaderDelimeter);
+                        cur_request_.headers.Add(item.Key.ToLower(), item.Value);
                     }
-                    headers.Append(kHeaderDelimeter);
+#if UNITY_WEBGL
+                    // If there is no content-length, adds the content-length.
+                    // This is for the WebGL client.
+                    if (!cur_request_.headers.ContainsKey("content-length"))
+                    {
+                        cur_request_.headers.Add("content-length", www.bytes.Length.ToString());
+                    }
+#endif
 
+                    // Decodes message
                     lock (receive_lock_)
                     {
-                        onReceiveHeader(headers.ToString());
+                        onReceiveHeader(cur_request_.headers);
 
                         Buffer.BlockCopy(www.bytes, 0, receive_buffer_, received_size_, www.bytes.Length);
                         received_size_ += www.bytes.Length;
 
-                        debug.LogDebug("[HTTP] received {0} bytes.", received_size_);
-
-                        // Parses a message
-                        parseMessages();
+                        // Makes a raw message
+                        readBodyAndSaveMessage(cur_request_.headers);
                     }
 
                     lock (request_lock_)
@@ -1271,10 +1390,11 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kRequestFailed;
-                    error.message = "[HTTP] failure in wwwPost: " + e.ToString();
+                    error.message = "[HTTP] Failure in wwwPost: " + e.ToString();
                     onFailure(error);
                 }
             }
+#endif
 #endif
 
             void cancelRequest ()
@@ -1296,8 +1416,13 @@ namespace Fun
                             cur_request_.read_stream.Close();
 
 #if !NO_UNITY
+#if UNITY_2017_1_OR_NEWER
+                        if (cur_request_.uw_request != null)
+                            cur_request_.cancel = true;
+#else
                         if (cur_request_.www != null)
                             cur_request_.cancel = true;
+#endif
 #endif
                         cur_request_ = null;
                     }
@@ -1322,10 +1447,14 @@ namespace Fun
                 public Stream read_stream = null;
                 public bool was_aborted = false;
 #if !NO_UNITY
-                // WWW-related
+#if UNITY_2017_1_OR_NEWER
+                public UnityWebRequest uw_request = null;
+#else
                 public WWW www = null;
+#endif
                 public bool cancel = false;
 #endif
+                public Dictionary<string, string> headers = new Dictionary<string, string>();
             }
 
 
@@ -1345,10 +1474,192 @@ namespace Fun
             Request cur_request_ = null;
         }
 
-
         // Websocket transport layer
         class WebsocketTransport : Transport
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            public class WebSocketJS
+            {
+                public WebSocketJS(Uri url)
+                {
+                    url_ = url;
+
+                    string protocol = url_.Scheme;
+                    if (!protocol.Equals("ws") && !protocol.Equals("wss"))
+                    {
+                        throw new ArgumentException("[Websocket] Unsupported protocol: " + protocol);
+                    }
+
+                    alive_ = true;
+                }
+
+                [DllImport("__Internal")]
+                private static extern int SocketJSCreate (string url);
+
+                [DllImport("__Internal")]
+                private static extern int SocketJSState (int socketInstance);
+
+                [DllImport("__Internal")]
+                private static extern void SocketJSSend (int socketInstance, byte[] ptr, int length);
+
+                [DllImport("__Internal")]
+                private static extern void SocketJSRecv (int socketInstance, byte[] ptr, int length);
+
+                [DllImport("__Internal")]
+                private static extern int SocketJSRecvLength (int socketInstance);
+
+                [DllImport("__Internal")]
+                private static extern void SocketJSClose (int socketInstance);
+
+                [DllImport("__Internal")]
+                private static extern string SocketJSError (int socketInstance);
+
+                [DllImport("__Internal")]
+                private static extern string SocketJSCloseReason (int socketInstance);
+
+                [DllImport("__Internal")]
+                private static extern int SocketJSCloseCode (int socketInstance);
+
+                public void Send(byte[] buffer)
+                {
+                    SocketJSSend (native_ref_, buffer, buffer.Length);
+
+                    if (SendCallback != null)
+                    {
+                        SendCallback(true);
+                    }
+                }
+
+                public IEnumerator Recv()
+                {
+                    int length;
+                    while (true)
+                    {
+                        if (!alive_)
+                        {
+                            yield break;
+                        }
+
+                        length = SocketJSRecvLength (native_ref_);
+                        if (length != 0)
+                        {
+                            break;
+                        }
+
+                        yield return null;
+                    }
+
+                    byte[] buffer = new byte[length];
+                    SocketJSRecv (native_ref_, buffer, length);
+
+                    if (ReceiveCallback != null)
+                    {
+                        ReceiveCallback(buffer);
+                    }
+                }
+
+                public IEnumerator GetError()
+                {
+                    string reason = null;
+
+                    while (true)
+                    {
+                        if (!alive_)
+                        {
+                            yield break;
+                        }
+
+                        reason = SocketJSError(native_ref_);
+                        if (reason != null)
+                        {
+                            break;
+                        }
+
+                        yield return null;
+                    }
+
+                    if (ErrorCallback != null)
+                    {
+                        ErrorCallback(reason);
+                    }
+                }
+
+                public IEnumerator Connect()
+                {
+                    native_ref_ = SocketJSCreate (url_.ToString());
+
+                    while (true)
+                    {
+                        if (!alive_)
+                        {
+                            yield break;
+                        }
+
+                        if (SocketJSState(native_ref_) != 0)
+                        {
+                            break;
+                        }
+
+                        yield return null;
+                    }
+
+                    if (StartCallback != null)
+                    {
+                        StartCallback();
+                    }
+                }
+
+                public IEnumerator Close()
+                {
+                    SocketJSClose(native_ref_);
+
+                    while (true)
+                    {
+                        if(SocketJSCloseCode(native_ref_) != 0)
+                        {
+                            break;
+                        }
+
+                        yield return null;
+                    }
+
+                    alive_ = false;
+
+                    if (CloseCallback != null)
+                    {
+                        CloseCallback();
+                    }
+                }
+
+                public string close_reason
+                {
+                    get
+                    {
+                        string reason = SocketJSCloseReason (native_ref_);
+                        return reason == null ? "" : reason;
+                    }
+                }
+
+                public int close_code
+                {
+                    get
+                    {
+                        return SocketJSCloseCode (native_ref_);
+                    }
+                }
+
+                public event System.Action StartCallback;
+                public event System.Action CloseCallback;
+                public event System.Action<bool> SendCallback;
+                public event System.Action<byte[]> ReceiveCallback;
+                public event System.Action<string> ErrorCallback;
+
+                Uri url_;
+                int native_ref_ = 0;
+                bool alive_ = false;
+            }
+#endif
+
             public WebsocketTransport (string hostname_or_ip, UInt16 port,
                                        FunEncoding type, TransportOption websocket_option)
             {
@@ -1370,16 +1681,21 @@ namespace Fun
                 get
                 {
                     lock (sock_lock_)
+                    {
                         return wsock_ != null && state_ >= State.kConnected;
+                    }
                 }
             }
 
             void setAddress (string host, UInt16 port)
             {
-                addr_ = new HostIP(host, port);
+                addr_ = new HostAddr(host, port);
+
+                WebsocketTransportOption ws_option = (WebsocketTransportOption)option_;
+                wss_ = ws_option.WSS;
 
                 // Sets host url
-                host_url_ = string.Format("ws://{0}:{1}/", host, port);
+                host_url_ = string.Format("{0}://{1}:{2}/", wss_ ? "wss" : "ws", host, port);
 
                 debug.Log("[Websocket] {0}, {1}, {2}, Compression:{3}, ConnectionTimeout:{4}",
                           host_url_, convertString(encoding_), convertString(option_.Encryption),
@@ -1391,11 +1707,20 @@ namespace Fun
                 base.onStart();
 
                 state_ = State.kConnecting;
-
-                addr_.refresh();
+                sent_length_ = 0;
 
                 lock (sock_lock_)
                 {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    wsock_ = new WebSocketJS(new Uri(host_url_));
+                    wsock_.StartCallback += startJSCb;
+                    wsock_.CloseCallback += closeJSCb;
+                    wsock_.ErrorCallback += errorJSCb;
+                    wsock_.SendCallback += sendBytesCb;
+                    wsock_.ReceiveCallback += receiveBytesJSCb;
+
+                    mono.StartCoroutine(wsock_.Connect());
+#else
                     wsock_ = new WebSocket(host_url_);
                     wsock_.OnOpen += startCb;
                     wsock_.OnClose += closeCb;
@@ -1403,6 +1728,7 @@ namespace Fun
                     wsock_.OnMessage += receiveBytesCb;
 
                     wsock_.ConnectAsync();
+#endif
                 }
             }
 
@@ -1412,10 +1738,16 @@ namespace Fun
                 {
                     if (wsock_ != null)
                     {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                        mono.StartCoroutine(wsock_.Close());
+#else
                         wsock_.Close();
+#endif
                         wsock_ = null;
                     }
                 }
+
+                sent_length_ = 0;
 
                 base.onClose();
             }
@@ -1425,22 +1757,34 @@ namespace Fun
                 try
                 {
                     byte[] buffer = null;
+                    int offset = 0;
 
                     lock (sending_lock_)
                     {
-                        FunDebug.Assert(sending_.Count > 0);
-                        FunapiMessage msg = sending_[0];
+                        if (sent_length_ > 0)
+                            return;
 
-                        int length = msg.header.Count + msg.body.Count;
+                        int length = getSendingBufferLength();
                         buffer = new byte[length];
 
-                        if (msg.header.Count > 0)
-                            Buffer.BlockCopy(msg.header.Array, 0, buffer, 0, msg.header.Count);
+                        foreach (FunapiMessage msg in sending_)
+                        {
+                            if (offset > 0 && (offset + msg.header.Count + msg.body.Count) > length)
+                                break;
 
-                        if (msg.body.Count > 0)
-                            Buffer.BlockCopy(msg.body.Array, 0, buffer, msg.header.Count, msg.body.Count);
+                            if (msg.header.Count > 0)
+                            {
+                                Buffer.BlockCopy(msg.header.Array, 0, buffer, offset, msg.header.Count);
+                                offset += msg.header.Count;
+                            }
+                            if (msg.body.Count > 0)
+                            {
+                                Buffer.BlockCopy(msg.body.Array, 0, buffer, offset, msg.body.Count);
+                                offset += msg.body.Count;
+                            }
+                        }
 
-                        debug.LogDebug("[Websocket] sending {0} bytes.", length);
+                        FunDebug.Assert(offset == length);
                     }
 
                     lock (sock_lock_)
@@ -1448,28 +1792,81 @@ namespace Fun
                         if (wsock_ == null)
                             return;
 
+                        sent_length_ = offset;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+                        wsock_.Send(buffer);
+#else
                         wsock_.SendAsync(buffer, sendBytesCb);
+#endif
                     }
                 }
                 catch (Exception e)
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "[Websocket] failure in wireSend: " + e.ToString();
+                    error.message = "[Websocket] Failure in wireSend: " + e.ToString();
                     onFailure(error);
                 }
             }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            void startJSCb ()
+            {
+                lock (start_lock_)
+                {
+                    if (is_connection_timed_out_ || state_ != State.kConnecting)
+                    {
+                        return;
+                    }
+
+                    state_ = State.kHandshaking;
+
+                    debug.LogDebug("[Websocket] Connected. Starts handshaking..");
+
+                    mono.StartCoroutine(wsock_.Recv());
+                    mono.StartCoroutine(wsock_.GetError());
+                }
+            }
+#endif
+
             void startCb (object sender, EventArgs args)
             {
-                state_ = State.kHandshaking;
+                lock (start_lock_)
+                {
+                    if (is_connection_timed_out_ || state_ != State.kConnecting)
+                    {
+                        return;
+                    }
 
-                debug.LogDebug("[Websocket] transport connected. Starts handshaking..");
+                    state_ = State.kHandshaking;
+
+                    debug.LogDebug("[Websocket] Connected. Starts handshaking..");
+                }
             }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            void closeJSCb ()
+            {
+                debug.Log("[Websocket] Closed. ({0}) {1}", wsock_.close_code, wsock_.close_reason);
+
+                CloseStatusCode code = (CloseStatusCode)wsock_.close_code;
+                if (code != CloseStatusCode.Normal && code != CloseStatusCode.NoStatus)
+                {
+                    TransportError error = new TransportError();
+                    if (state != State.kEstablished)
+                        error.type = TransportError.Type.kStartingFailed;
+                    else
+                        error.type = TransportError.Type.kDisconnected;
+                    error.message = string.Format("[Websocket] Failure: {0}({1}) : {2}", code, wsock_.close_code, wsock_.close_reason);
+                    onFailure(error);
+                }
+            }
+#endif
 
             void closeCb (object sender, CloseEventArgs args)
             {
-                debug.LogDebug("[Websocket] closeCb called. ({0}) {1}", args.Code, args.Reason);
+                debug.LogDebug("[Websocket] Closed. ({0}) {1}", args.Code, args.Reason);
 
                 CloseStatusCode code = (CloseStatusCode)args.Code;
                 if (code != CloseStatusCode.Normal && code != CloseStatusCode.NoStatus)
@@ -1479,16 +1876,26 @@ namespace Fun
                         error.type = TransportError.Type.kStartingFailed;
                     else
                         error.type = TransportError.Type.kDisconnected;
-                    error.message = string.Format("[Websocket] failure: {0}({1}) : {2}", code, args.Code, args.Reason);
+                    error.message = string.Format("[Websocket] Failure: {0}({1}) : {2}", code, args.Code, args.Reason);
                     onFailure(error);
                 }
             }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            void errorJSCb (string error_msg)
+            {
+                TransportError error = new TransportError();
+                error.type = TransportError.Type.kWebsocketError;
+                error.message = "[Websocket] Error: " + error_msg;
+                onFailure(error);
+            }
+#endif
 
             void errorCb (object sender, WebSocketSharp.ErrorEventArgs args)
             {
                 TransportError error = new TransportError();
                 error.type = TransportError.Type.kWebsocketError;
-                error.message = "[Websocket] failure: " + args.Message;
+                error.message = "[Websocket] Error: " + args.Message;
                 onFailure(error);
             }
 
@@ -1498,29 +1905,93 @@ namespace Fun
                 {
                     if (!completed)
                     {
-                        debug.LogError("[Websocket] failed to transfer messages.");
+                        debug.LogError("[Websocket] Failed to transfer messages.");
                         return;
                     }
 
-                    lock (sending_lock_)
+                    int nSent = sent_length_;
+                    if (nSent > 0)
                     {
-                        FunDebug.Assert(sending_.Count > 0);
-                        sending_.RemoveAt(0);
+                        lock (sending_lock_)
+                        {
+                            while (nSent > 0)
+                            {
+                                if (sending_.Count > 0)
+                                {
+                                    // removes a sent message.
+                                    FunapiMessage msg = sending_[0];
+                                    int length = msg.header.Count + msg.body.Count;
+                                    nSent -= length;
 
-                        debug.LogDebug("[Websocket] sent 1 message.");
+                                    sending_.RemoveAt(0);
+                                }
+                                else
+                                {
+                                    debug.LogError("[Websocket] Sent {0} more bytes but couldn't find the sending buffer.", nSent);
+                                    break;
+                                }
+                            }
 
-                        // Sends pending messages
-                        checkPendingMessages();
+                            if (sending_.Count > 0)
+                            {
+                                debug.LogDebug("[Websocket] {0} message(s) left in the sending buffer.", sending_.Count);
+                            }
+
+                            sent_length_ = 0;
+
+                            // Sends pending messages
+                            checkPendingMessages();
+                        }
+                    }
+                    else
+                    {
+                        debug.LogWarning("[Websocket] socket closed");
                     }
                 }
                 catch (Exception e)
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kSendingFailed;
-                    error.message = "[Websocket] failure in sendBytesCb: " + e.ToString();
+                    error.message = "[Websocket] Failure in sendBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            void receiveBytesJSCb (byte[] buffer)
+            {
+                try
+                {
+                    lock (receive_lock_)
+                    {
+                        int len = buffer.Length;
+
+                        checkReceiveBuffer(len);
+
+                        // Copy the recieved messages
+                        Buffer.BlockCopy(buffer, 0, receive_buffer_, received_size_, len);
+                        received_size_ += len;
+
+                        // Parses messages
+                        parseMessages();
+
+                        if (wsock_ == null)
+                        {
+                            return;
+                        }
+
+                        mono.StartCoroutine(wsock_.Recv());
+                    }
+                }
+                catch (Exception e)
+                {
+                    TransportError error = new TransportError();
+                    error.type = TransportError.Type.kReceivingFailed;
+                    error.message = "[Websocket] Failure in receiveBytesJSCb: " + e.ToString();
+                    onFailure(error);
+                }
+            }
+#endif
 
             void receiveBytesCb (object sender, MessageEventArgs args)
             {
@@ -1537,9 +2008,6 @@ namespace Fun
                             Buffer.BlockCopy(args.RawData, 0, receive_buffer_, received_size_, args.RawData.Length);
                             received_size_ += args.RawData.Length;
 
-                            debug.LogDebug("[Websocket] received {0} bytes. Buffer has {1} bytes.",
-                                            args.RawData.Length, received_size_ - next_decoding_offset_);
-
                             // Parses messages
                             parseMessages();
                         }
@@ -1547,15 +2015,9 @@ namespace Fun
                         {
                             debug.LogWarning("[Websocket] socket closed");
 
-                            if (received_size_ - next_decoding_offset_ > 0)
-                            {
-                                debug.LogWarning("[Websocket] buffer has {0} bytes but they failed to decode. Discarding.",
-                                                 received_size_ - next_decoding_offset_);
-                            }
-
                             TransportError error = new TransportError();
                             error.type = TransportError.Type.kDisconnected;
-                            error.message = "Websocket can't receive messages. Maybe the socket is closed.";
+                            error.message = "[Websocket] Can't receive messages. Maybe the socket is closed.";
                             onDisconnected(error);
                         }
                     }
@@ -1564,16 +2026,22 @@ namespace Fun
                 {
                     TransportError error = new TransportError();
                     error.type = TransportError.Type.kReceivingFailed;
-                    error.message = "[Websocket] failure in receiveBytesCb: " + e.ToString();
+                    error.message = "[Websocket] Failure in receiveBytesCb: " + e.ToString();
                     onFailure(error);
                 }
             }
 
 
-            HostIP addr_;
+            HostAddr addr_;
             string host_url_;
+            bool wss_ = false;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            WebSocketJS wsock_;
+#else
             WebSocket wsock_;
+#endif
             object sock_lock_ = new object();
+            int sent_length_ = 0;
         }
     }
 
