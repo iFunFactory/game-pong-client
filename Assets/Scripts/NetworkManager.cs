@@ -23,12 +23,12 @@ public class NetworkManager : Singleton<NetworkManager>
     {
         // 로비 서버 주소를 수정하세요.
         // 게임 서버의 주소는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
-        public string address = "";
+        public string address = "211.114.35.62";
 
         // 로비 서버 포트 정보를 수정하세요.
         // 서버측 MANIFEST.lobby.json 상에서 활성화된 포트 번호를 여기 기재합니다.
         // 게임 서버의 포트는 매치메이킹 이후에 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
-        public ushort port = 8012;
+        public ushort port = 38012;
 
         // 로비 서버에 접속할 프로토콜을 지정하세요.
         // kTcp, kUdp, kHttp 가 가능합니다.
@@ -42,7 +42,7 @@ public class NetworkManager : Singleton<NetworkManager>
         // 게임 서버의 경우는 매치메이킹 이후 로비 서버가 패킷으로 전달하기 때문에 별도로 기재하지 않습니다.
         // 여기의 값을 수정하게 될 경우, MANIFEST.lobby.json 의 포트 정보 역시 수정해야됩니다.
         // (예, TCP 에 JSON 을 쓸 경우 "tcp_json_port" 값을 0 이 아닌 값으로 지정)
-        public FunEncoding encoding = FunEncoding.kJson;
+        public FunEncoding encoding = FunEncoding.kProtobuf;
 
         // Options
         public bool sessionReliability = false;
